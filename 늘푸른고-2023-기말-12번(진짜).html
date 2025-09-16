@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Math Video Player V27.3</title>
+
+<!-- MathJax 설정 -->
+<script>
+window.MathJax = {
+  tex: {
+    inlineMath: [["$", "$"], ["\\(", "\\)"]],
+    displayMath: [["$$", "$$"], ["\\[", "\\]"]],
+    packages: {'[+]': ['ams', 'color', 'bbox']}
+  },
+  svg: { fontCache: 'global' },
+  startup: { typeset: false }
+};
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700&display=swap');
+:root {
+  --solution-font-size: 28px;
+  --dracula-bg: #282a36; --dracula-panel: #21222c;
+  --dracula-selection: #44475a; --dracula-purple: #bd93f9; --chalk-white: #f8f8f2;
+  --chalk-yellow: #F8E71C; --chalk-cyan: #8be9fd; --chalk-red: #FF5555; --chalk-grey: #6272a4;
+}
+html, body { width:100%; height:100%; margin:0; overflow:hidden; background:var(--dracula-bg); display:flex; justify-content:center; align-items:center; font-family:'Noto Sans KR',sans-serif; color:var(--chalk-white); }
+#main-container { width:1920px; height:1080px; flex-shrink:0; display:flex; flex-direction:column; background:var(--dracula-panel); border-radius:15px; box-shadow:0 10px 30px rgba(0,0,0,0.5); position:relative; transform-origin:center center; }
+
+/* 기본: 좌 4, 우 6 비율 */
+#content-container { flex-grow:1; display:grid; grid-template-columns: 4fr 6fr; padding:24px 30px; gap:30px; min-height:0; }
+.panel { background:var(--dracula-bg); border-radius:8px; box-shadow:inset 0 2px 4px rgba(0,0,0,0.3); padding:24px; display:flex; flex-direction:column; overflow:hidden; }
+.panel-title { text-transform:uppercase; color:var(--dracula-purple); font-weight:700; font-size:calc(var(--solution-font-size)*1.1); margin:0 0 .8em; padding-bottom:.5em; border-bottom:1px solid var(--dracula-selection); flex-shrink:0; }
+
+#visuals-wrapper { flex-grow:1; min-height:0; display:flex; flex-direction:column; gap:15px; }
+#image-wrapper { flex:1; min-height:0; position:relative; border-radius:6px; overflow:hidden; background:#000; }
+#graph-wrapper { flex:1; min-height:0; position:relative; border-radius:6px; overflow:hidden; }
+#visuals-background-image { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; }
+#graph-canvas { display:block; width:100%; height:100%; }
+
+#solution-wrapper { flex-grow:1; min-height:0; position:relative; overflow:hidden; }
+.solution-page { display:none; width:100%; height:100%; overflow-y:auto; padding-right:15px; box-sizing:border-box; scrollbar-gutter:stable; }
+.solution-page.is-active { display:block; }
+.solution-page::-webkit-scrollbar { width:10px; }
+.solution-page::-webkit-scrollbar-thumb { background:var(--dracula-selection); border-radius:5px; }
+.solution-page::-webkit-scrollbar-thumb:hover { background:var(--chalk-grey); }
+.solution-step { position:relative; padding-left:1.8em; margin:.5em 0; line-height:1.7; font-size:var(--solution-font-size); color:var(--chalk-white); }
+.solution-step:not(.is-title)::before { content:'·'; position:absolute; left:0; line-height:inherit; color:inherit; }
+.solution-step.is-title { padding-left:0; margin-top:1em; color:var(--chalk-cyan); font-weight:700; font-size:calc(var(--solution-font-size)*1.05); }
+
+#controls-container { flex-shrink:0; height:90px; background:rgba(33,34,44,0.8); border-top:1px solid var(--dracula-selection); padding:0 30px; display:flex; justify-content:center; align-items:center; }
+#player-controls { display:flex; align-items:center; width:100%; gap:20px; }
+#play-pause-btn { background:transparent; border:none; color:white; font-size:38px; cursor:pointer; padding:0; width:50px; text-align:center; }
+#timeline { flex-grow:1; height:10px; background:var(--dracula-selection); border-radius:5px; cursor:pointer; position:relative; }
+#progress-bar { width:0%; height:100%; background:var(--dracula-purple); border-radius:5px; }
+#time-display { font-size:22px; color:var(--chalk-grey); min-width:140px; text-align:center; }
+#loading-overlay { position:absolute; inset:0; background:rgba(40,42,54,.95); z-index:100; display:flex; flex-direction:column; justify-content:center; align-items:center; color:white; font-size:36px; border-radius:15px; }
+#loading-progress-text { font-size:.7em; margin-top:20px; color:var(--chalk-grey); }
+#toast { position:absolute; bottom:110px; left:50%; transform:translateX(-50%); background:rgba(0,0,0,.75); color:#fff; padding:8px 12px; border-radius:6px; font-size:14px; display:none; }
+
+/* 활성 스텝 하이라이트 */
+.solution-step.is-active-step { background:rgba(189,147,249,.12); border-left:3px solid var(--dracula-purple); padding-left:1.3em; }
+
+/* ========= 하드코딩 4 모드 ========= */
+/* CASE1: Solution Full */
+.layout-case-1 #content-container { grid-template-columns: 0fr 1fr; }
+.layout-case-1 #visuals-panel { display:none; }
+.layout-case-1 #solution-panel { width:100%; }
+/* CASE2: 이미지만 */
+.layout-case-2 #visuals-panel { display:flex; }
+.layout-case-2 #image-wrapper { display:block; flex:1 1 auto; }
+.layout-case-2 #graph-wrapper { display:none; }
+/* CASE3: 그래프만 */
+.layout-case-3 #visuals-panel { display:flex; }
+.layout-case-3 #image-wrapper { display:none; }
+.layout-case-3 #graph-wrapper { display:block; flex:1 1 auto; }
+/* CASE4: 둘다(위/아래 반반) */
+.layout-case-4 #visuals-panel { display:flex; }
+.layout-case-4 #visuals-wrapper { display:flex; flex-direction:column; gap:15px; }
+.layout-case-4 #image-wrapper { display:block; flex:1 1 50%; }
+.layout-case-4 #graph-wrapper { display:block; flex:1 1 50%; }
+/* 이미지 확대 옵션 */
+.layout-image-zoom #visuals-background-image { object-fit:cover; }
+</style>
+</head>
+<body>
+<div id="main-container" class="layout-case-1">
+  <div id="loading-overlay">
+    <div>Loading V27.3 Player</div>
+    <div id="loading-progress-text"></div>
+  </div>
+  <div id="content-container">
+    <div id="visuals-panel" class="panel">
+      <h2 class="panel-title">Visuals</h2>
+      <div id="visuals-wrapper">
+        <div id="image-wrapper"><img id="visuals-background-image" src="" alt="Problem Visual" /></div>
+        <div id="graph-wrapper"><canvas id="graph-canvas"></canvas></div>
+      </div>
+    </div>
+    <div id="solution-panel" class="panel">
+      <h2 class="panel-title">Solution</h2>
+      <div id="solution-wrapper"></div>
+    </div>
+  </div>
+  <div id="controls-container">
+    <div id="player-controls">
+      <button id="play-pause-btn" aria-label="재생">▶</button>
+      <div id="timeline"><div id="progress-bar"></div></div>
+      <div id="time-display">0:00 / 0:00</div>
+    </div>
+  </div>
+  <div id="toast"></div>
+  <audio id="audio-player" preload="auto"></audio>
+</div>
+
+<script>
+var problemData = {
+  "metadata": {
+    "title": "2023 늘푸른고 기출 9번",
+    "problemId": "npg-2023-9",
+    "imageUrl": "",
+    "invertImageForDarkBG": false,
+    "imageZoomWhenSolo": false
+  },
+  "audioUrls": [
+    "https://raw.githubusercontent.com/sykaboom/triple-audio/main/audio/npg-2023-12/npg-2023-12_S001.mp3",
+    "https://raw.githubusercontent.com/sykaboom/triple-audio/main/audio/npg-2023-12/npg-2023-12_S002.mp3",
+    "https://raw.githubusercontent.com/sykaboom/triple-audio/main/audio/npg-2023-12/npg-2023-12_S003.mp3",
+    "https://raw.githubusercontent.com/sykaboom/triple-audio/main/audio/npg-2023-12/npg-2023-12_S004.mp3",
+    "https://raw.githubusercontent.com/sykaboom/triple-audio/main/audio/npg-2023-12/npg-2023-12_S005.mp3",
+    "https://raw.githubusercontent.com/sykaboom/triple-audio/main/audio/npg-2023-12/npg-2023-12_S006.mp3",
+    "https://raw.githubusercontent.com/sykaboom/triple-audio/main/audio/npg-2023-12/npg-2023-12_S007.mp3",
+    "https://raw.githubusercontent.com/sykaboom/triple-audio/main/audio/npg-2023-12/npg-2023-12_S008.mp3",
+    "https://raw.githubusercontent.com/sykaboom/triple-audio/main/audio/npg-2023-12/npg-2023-12_S009.mp3",
+    "https://raw.githubusercontent.com/sykaboom/triple-audio/main/audio/npg-2023-12/npg-2023-12_S010.mp3"
+  ],
+  "solutionSteps": [
+    { "step_id": "s1", "latex": "\\(\\textbf{1. 문제 분석 및 조건 확인}\\)", "is_title": true },
+    { "step_id": "s2", "latex": "주어진 조건: 평면 위에 원 O가 있으며, 반지름의 길이는 $5\\sqrt{2}$ 입니다." },
+    { "step_id": "s3", "latex": "원 O 위의 두 점 A, C와 원 내부의 한 점 B가 있습니다." },
+    { "step_id": "s4", "latex": "각 선분의 길이는 AB=12, BC=4 입니다." },
+    { "step_id": "s5", "latex": "각도 $\\angle ABC=90^\\circ$ 입니다." },
+    { "step_id": "s6", "latex": "선분 OB의 길이를 l 이라고 합니다." },
+    { "step_id": "s7", "latex": "구해야 하는 값: $l^2$ (선분 OB의 길이의 제곱)" },
+    { "step_id": "s8", "latex": "\\(\\textbf{2. 접근 전략 수립}\\)", "is_title": true },
+    { "step_id": "s9", "latex": "문제에서 $\\angle ABC=90^\\circ$라는 직각 조건이 주어졌으므로, 좌표평면을 도입하여 문제를 해결하는 것이 효율적입니다." },
+    { "step_id": "s10", "latex": "점 B를 원점(0, 0)으로 설정하면 점 A와 C의 좌표를 쉽게 구할 수 있습니다." },
+    { "step_id": "s11", "latex": "[원의 방정식] 개념을 활용합니다. 원의 중심을 O(a, b)라고 설정합니다." },
+    { "step_id": "s12", "latex": "[두 점 사이의 거리] 공식을 사용합니다. 점 A와 점 C는 원 위의 점이므로, 중심 O(a, b)로부터 A와 C까지의 거리는 모두 반지름 $5\\sqrt{2}$와 같습니다." },
+    { "step_id": "s13", "latex": "이 성질을 이용하여 a와 b에 대한 두 개의 방정식을 세우고 연립방정식으로 풉니다." },
+    { "step_id": "s14", "latex": "'점 B는 원 내부의 점'이라는 조건에 맞는 중심 좌표 후보를 선택합니다." },
+    { "step_id": "s15", "latex": "최종값 계산: 확정된 중심 O(a, b)와 원점 B(0, 0) 사이의 거리의 제곱, 즉 $l^2=a^2+b^2$를 계산합니다." },
+    { "step_id": "s16", "latex": "\\(\\textbf{3. 단계별 풀이 과정}\\)", "is_title": true },
+    { "step_id": "s17", "latex": "\\(1)\\) 좌표 설정" },
+    { "step_id": "s18", "latex": "점 B를 좌표평면의 원점 B(0, 0) 으로 설정합니다." },
+    { "step_id": "s19", "latex": "$\\angle ABC=90^\\circ$ 이고 BC=4 이므로, 점 C는 x축 위의 점 C(4, 0) 이 됩니다." },
+    { "step_id": "s20", "latex": "$\\angle ABC=90^\\circ$ 이고 AB=12 이므로, 점 A는 y축 위의 점 A(0, 12) 가 됩니다." },
+    { "step_id": "s21", "latex": "\\(2)\\) 원의 중심 O(a, b)에 대한 방정식 세우기" },
+    { "step_id": "s22", "latex": "원의 반지름 $R=5\\sqrt{2}$ 이므로, $R^2=50$ 입니다." },
+    { "step_id": "s23", "latex": "점 A(0, 12)는 원 위의 점이므로, 중심 O(a, b)에서 A까지의 거리의 제곱은 $R^2$과 같습니다." },
+    { "step_id": "s24", "latex": "$(a-0)^2 + (b-12)^2 = 50 \\implies a^2+(b-12)^2=50$ --- (식 ①)" },
+    { "step_id": "s25", "latex": "점 C(4, 0)는 원 위의 점이므로, 중심 O(a, b)에서 C까지의 거리의 제곱은 $R^2$과 같습니다." },
+    { "step_id": "s26", "latex": "$(a-4)^2 + (b-0)^2 = 50 \\implies (a-4)^2+b^2=50$ --- (식 ②)" },
+    { "step_id": "s27", "latex": "\\(3)\\) 연립방정식 풀이로 중심 O의 좌표 구하기" },
+    { "step_id": "s28", "latex": "식 ① 전개: $a^2+b^2−24b+144=50$" },
+    { "step_id": "s29", "latex": "식 ② 전개: $a^2−8a+16+b^2=50$" },
+    { "step_id": "s30", "latex": "두 식의 우변이 같으므로, $a^2+b^2−24b+144 = a^2−8a+16+b^2$" },
+    { "step_id": "s31", "latex": "정리하면 $8a = 24b - 128$, 즉 $a=3b−16$ --- (식 ③)" },
+    { "step_id": "s32", "latex": "식 ③을 식 ②에 대입합니다: $((3b−16)−4)^2+b^2=50$" },
+    { "step_id": "s33", "latex": "정리하면 $(3b−20)^2+b^2=50 \\implies 10b^2−120b+350=0$" },
+    { "step_id": "s34", "latex": "양변을 10으로 나누면: $b^2−12b+35=0$" },
+    { "step_id": "s35", "latex": "인수분해하면: $(b−5)(b−7)=0$" },
+    { "step_id": "s36", "latex": "따라서 $b=5$ 또는 $b=7$ 입니다." },
+    { "step_id": "s37", "latex": "각각의 b 값을 식 ③에 대입하여 a 값을 구합니다." },
+    { "step_id": "s38", "latex": "$b=5$ 일 때: $a=3(5)−16=−1$. 중심 후보 1: O(-1, 5)" },
+    { "step_id": "s39", "latex": "$b=7$ 일 때: $a=3(7)−16=5$. 중심 후보 2: O(5, 7)" },
+    { "step_id": "s40", "latex": "\\(4)\\) '점 B는 원 내부의 점' 조건 확인" },
+    { "step_id": "s41", "latex": "점 B(0, 0)에서 중심 O까지의 거리의 제곱($l^2$)이 반지름의 제곱(50)보다 작아야 합니다." },
+    { "step_id": "s42", "latex": "후보 1: O(-1, 5) $\\implies l^2=(-1)^2+5^2=26$. $26<50$ 이므로 조건을 만족합니다." },
+    { "step_id": "s43", "latex": "후보 2: O(5, 7) $\\implies l^2=5^2+7^2=74$. $74>50$ 이므로 조건을 만족하지 않습니다." },
+    { "step_id": "s44", "latex": "따라서 원의 중심은 O(-1, 5) 입니다." },
+    { "step_id": "s45", "latex": "\\(5)\\) $l^2$ 값 계산" },
+    { "step_id": "s46", "latex": "우리가 구하려는 값은 $l^2 = OB^2$ 입니다." },
+    { "step_id": "s47", "latex": "중심 O(-1, 5)와 원점 B(0,0) 사이의 거리의 제곱이므로, $l^2 = (-1-0)^2 + (5-0)^2 = 26$ 입니다." },
+    { "step_id": "s48", "latex": "\\(\\textbf{4. 결론 도출}\\)", "is_title": true },
+    { "step_id": "s49", "latex": "모든 조건과 계산 과정을 종합했을 때, $l^2$의 값은 26입니다." }
+  ],
+  "scenes": [
+    {
+      "scene_id": 1, "script_korean": "...", "solutionHighlightIds": ["s2", "s3", "s4", "s5", "s6", "s7"],
+      "canvas_script": "drawMathText('반지름 R = 5√2', 12, 18, '#8be9fd');\ndrawMathText('AB = 12, BC = 4', 12, 16, '#f8f8f2');\ndrawMathText('∠ABC = 90°', 12, 14, '#f8f8f2');\ndrawMathText('점 B는 원 내부', 12, 12, '#f8f8f2');\ndrawMathText('OB² = l² = ?', 12, 8, '#ff79c6', 1.5);",
+      "useImage": false
+    },
+    {
+      "scene_id": 2, "script_korean": "...", "solutionHighlightIds": ["s9"],
+      "canvas_script": "drawGridAndAxes();\ndrawPoint(0, 0, '#f1fa8c', 0.25);\ndrawMathText('B(0,0)', -1.5, -1, '#f1fa8c');",
+      "useImage": false
+    },
+    {
+      "scene_id": 3, "script_korean": "...", "solutionHighlightIds": ["s10", "s11", "s12", "s13", "s14", "s15"],
+      "canvas_script": "drawGridAndAxes();\ndrawPoint(0, 0, '#f1fa8c', 0.25);\ndrawMathText('B(0,0)', -1.5, -1, '#f1fa8c');\ndrawMathText('전략: 좌표 설정 후', 12, 18, '#8be9fd', 1.5);\ndrawMathText('원의 방정식을 이용!', 12, 16, '#8be9fd', 1.5);",
+      "useImage": false
+    },
+    {
+      "scene_id": 4, "script_korean": "...", "solutionHighlightIds": ["s17", "s18", "s19", "s20"],
+      "canvas_script": "drawGridAndAxes();\ndrawPoint(0, 0, '#f8f8f2', 0.25);\ndrawMathText('B(0,0)', -1.5, -1, '#f8f8f2');\ndrawPoint(4, 0, '#ff79c6', 0.25);\ndrawMathText('C(4,0)', 4, -1.5, '#ff79c6');\ndrawPoint(0, 12, '#50fa7b', 0.25);\ndrawMathText('A(0,12)', -2.5, 12, '#50fa7b');\ndrawLine(0,0,4,0, '#f8f8f2', 0.1);\ndrawLine(0,0,0,12, '#f8f8f2', 0.1);\ndrawLine(0.5, 0, 0.5, 0.5, '#f8f8f2', 0.1);\ndrawLine(0, 0.5, 0.5, 0.5, '#f8f8f2', 0.1);",
+      "useImage": false
+    },
+    {
+      "scene_id": 5, "script_korean": "...", "solutionHighlightIds": ["s21", "s22", "s23", "s24", "s25", "s26"],
+      "canvas_script": "drawGridAndAxes();\ndrawPoint(0, 0, '#f8f8f2', 0.2); drawMathText('B', -1.5, -1, '#f8f8f2');\ndrawPoint(4, 0, '#ff79c6', 0.2); drawMathText('C(4,0)', 4, -1.5, '#ff79c6');\ndrawPoint(0, 12, '#50fa7b', 0.2); drawMathText('A(0,12)', -2.5, 12, '#50fa7b');\ndrawPoint(-1, 5, '#f1fa8c', 0.25); drawMathText('O(a,b)', -1, 4, '#f1fa8c');\ndrawLine(-1,5,0,12, '#bd93f9', 0.08, [0.3, 0.2]);\ndrawLine(-1,5,4,0, '#bd93f9', 0.08, [0.3, 0.2]);\ndrawMathText('a²+(b-12)² = 50  --- ①', 14, 15, '#8be9fd');\ndrawMathText('(a-4)²+b² = 50  --- ②', 14, 13, '#8be9fd');",
+      "useImage": false
+    },
+    {
+      "scene_id": 6, "script_korean": "...", "solutionHighlightIds": ["s27", "s28", "s29", "s30", "s31"],
+      "canvas_script": "drawMathText('①: a²+b²-24b+144 = 50', 10, 15);\ndrawMathText('②: a²-8a+16+b² = 50', 10, 13);\ndrawLine(3, 12.5, 17, 12.5, '#f8f8f2', 0.08);\ndrawMathText('   -24b+144 = -8a+16', 10, 11);\ndrawMathText('=> a = 3b - 16  --- ③', 10, 8, '#f1fa8c', 1.3);",
+      "useImage": false
+    },
+    {
+      "scene_id": 7, "script_korean": "...", "solutionHighlightIds": ["s32", "s33", "s34", "s35", "s36"],
+      "canvas_script": "drawMathText('③ → ②', 10, 18, '#f1fa8c');\ndrawMathText('((3b-16)-4)²+b²=50', 10, 16);\ndrawMathText('(3b-20)²+b²=50', 10, 14);\ndrawMathText('10b²-120b+350=0', 10, 12);\ndrawMathText('b²-12b+35=0', 10, 10);\ndrawMathText('(b-5)(b-7)=0', 10, 8);\ndrawMathText('b=5 또는 b=7', 10, 5, '#50fa7b', 1.4);",
+      "useImage": false
+    },
+    {
+      "scene_id": 8, "script_korean": "...", "solutionHighlightIds": ["s37", "s38", "s39"],
+      "canvas_script": "drawGridAndAxes();\ndrawPoint(0, 12, '#50fa7b', 0.2); drawMathText('A', -1, 12);\ndrawPoint(4, 0, '#ff79c6', 0.2); drawMathText('C', 4.5, -1);\ndrawPoint(-1, 5, '#f1fa8c', 0.25); drawMathText('후보1: O(-1,5)', -1, 3.5, '#f1fa8c');\ndrawPoint(5, 7, '#8be9fd', 0.25); drawMathText('후보2: O(5,7)', 5, 5.5, '#8be9fd');",
+      "useImage": false
+    },
+    {
+      "scene_id": 9, "script_korean": "...", "solutionHighlightIds": ["s40", "s41", "s42", "s43", "s44"],
+      "canvas_script": "drawGridAndAxes();\ndrawPoint(0, 0, '#f8f8f2', 0.2); drawMathText('B', -1, -1);\ndrawPoint(0, 12, '#50fa7b', 0.2); drawMathText('A', -1, 12);\ndrawPoint(4, 0, '#ff79c6', 0.2); drawMathText('C', 4.5, -1);\ndrawPoint(5, 7, '#6272a4', 0.25); drawMathText('O₂(5,7)', 5, 5.5, '#6272a4');\ndrawLine(3.5, 5.5, 6.5, 8.5, '#ff5555', 0.2);\ndrawLine(3.5, 8.5, 6.5, 5.5, '#ff5555', 0.2);\ndrawMathText('l² = 74 > 50 (외부)', 14, 8, '#ff5555');\ndrawPoint(-1, 5, '#50fa7b', 0.25); drawMathText('O₁(-1,5)', -1, 3.5, '#50fa7b');\ndrawMathText('l² = 26 < 50 (내부)', 14, 12, '#50fa7b');\nctx().beginPath(); ctx().strokeStyle = '#bd93f9'; ctx().lineWidth = 0.1; ctx().arc(-1, 5, Math.sqrt(50), 0, 2 * Math.PI); ctx().stroke();",
+      "useImage": false
+    },
+    {
+      "scene_id": 10, "script_korean": "...", "solutionHighlightIds": ["s45", "s46", "s47", "s49"],
+      "canvas_script": "drawGridAndAxes();\ndrawPoint(0, 0, '#f1fa8c', 0.25); drawMathText('B', -1, -1, '#f1fa8c');\ndrawPoint(0, 12, '#50fa7b', 0.2); drawMathText('A', -1, 12);\ndrawPoint(4, 0, '#ff79c6', 0.2); drawMathText('C', 4.5, -1);\ndrawPoint(-1, 5, '#50fa7b', 0.25); drawMathText('O(-1,5)', -1, 3.5);\nctx().beginPath(); ctx().strokeStyle = '#bd93f9'; ctx().lineWidth = 0.1; ctx().arc(-1, 5, Math.sqrt(50), 0, 2 * Math.PI); ctx().stroke();\ndrawLine(0,0, -1, 5, '#f1fa8c', 0.15);\ndrawMathText('l² = OB² = (-1-0)² + (5-0)²', 12, 15);\ndrawMathText('l² = 26', 12, 12, '#f1fa8c', 2);",
+      "useImage": false
+    }
+  ]
+};
+
+(function() {
+  'use strict';
+
+  const CONFIG = { WIDTH: 1920, HEIGHT: 1080, MARGIN_FACTOR: 0.95 };
+
+  const ui = {
+    solutionWrapper: document.getElementById('solution-wrapper'),
+    visualsWrapper: document.getElementById('visuals-wrapper'),
+    visualsBG: document.getElementById('visuals-background-image'),
+    canvas: document.getElementById('graph-canvas'),
+    ctx: null,
+    audio: document.getElementById('audio-player'),
+    playPauseBtn: document.getElementById('play-pause-btn'),
+    progressBar: document.getElementById('progress-bar'),
+    timeDisplay: document.getElementById('time-display'),
+    timeline: document.getElementById('timeline'),
+    loading: document.getElementById('loading-overlay'),
+    loadingProgress: document.getElementById('loading-progress-text'),
+    mainContainer: document.getElementById('main-container'),
+    graphWrapper: document.getElementById('graph-wrapper'),
+    imageWrapper: document.getElementById('image-wrapper'),
+    visualsPanel: document.getElementById('visuals-panel'),
+    toast: document.getElementById('toast')
+  };
+
+  const state = {
+    currentSceneIndex: -1,
+    totalDuration: 0,
+    sceneStartTimes: [],
+    sceneDurations: [],
+    isReady: false,
+    isPlaying: false,
+    isEnded: false,
+
+    isSilentScene: false,
+    currentTimeInScene: 0,
+    scenePlaybackStartTime: 0
+  };
+
+  function showToast(msg, ms = 1600) { ui.toast.textContent = msg; ui.toast.style.display = 'block'; setTimeout(()=>{ ui.toast.style.display='none'; }, ms); }
+  function handleResize(){ const vw=window.innerWidth, vh=window.innerHeight; const s=Math.min((vw/CONFIG.WIDTH)*CONFIG.MARGIN_FACTOR,(vh/CONFIG.HEIGHT)*CONFIG.MARGIN_FACTOR); ui.mainContainer.style.transform=`scale(${s})`; }
+  const ctx = () => ui.ctx;
+
+  function setupCanvas(retry=0){
+    if(!ui.canvas||!ui.ctx) return;
+    const dpr=window.devicePixelRatio||1; const lw=ui.canvas.clientWidth; const lh=ui.canvas.clientHeight;
+    if(!lw||!lh){ if(retry<5) setTimeout(()=>setupCanvas(retry+1), 30*Math.pow(2,retry)); return; }
+    ui.canvas.width=Math.max(1,Math.floor(lw*dpr)); ui.canvas.height=Math.max(1,Math.floor(lh*dpr));
+    ui.ctx.setTransform(1,0,0,1,0,0); ui.ctx.clearRect(0,0,ui.canvas.width,ui.canvas.height); ui.ctx.scale(dpr,dpr);
+    const vb={minX:-5,minY:-5,width:28,height:28}; const sc=Math.min(lw/vb.width, lh/vb.height); const ox=(lw-sc*vb.width)/2; const oy=(lh-sc*vb.height)/2;
+    ui.ctx.translate(ox, oy+sc*vb.height); ui.ctx.scale(sc,-sc); ui.ctx.translate(-vb.minX, -vb.minY);
+  }
+  function drawGridAndAxes(color="#bd93f9"){ const b={minX:-2,minY:-2,maxX:22,maxY:22}; ctx().beginPath(); ctx().strokeStyle="#44475a"; ctx().lineWidth=0.05; for(let i=b.minX;i<=b.maxX;i+=2){ctx().moveTo(i,b.minY);ctx().lineTo(i,b.maxY);} for(let i=b.minY;i<=b.maxY;i+=2){ctx().moveTo(b.minX,i);ctx().lineTo(b.maxX,i);} ctx().stroke(); drawLine(b.minX,0,b.maxX,0,color,0.1); drawLine(0,b.minY,0,b.maxY,color,0.1); }
+  function drawPoint(x,y,color="#f8f8f2",size=0.25){ ctx().beginPath(); ctx().fillStyle=color; ctx().arc(x,y,size,0,2*Math.PI); ctx().fill(); }
+  function drawLine(x1,y1,x2,y2,color="#f8f8f2",lw=0.08,dash=[]){ ctx().beginPath(); ctx().strokeStyle=color; ctx().lineWidth=lw; ctx().setLineDash(dash); ctx().moveTo(x1,y1); ctx().lineTo(x2,y2); ctx().stroke(); ctx().setLineDash([]); }
+  function drawMathText(text,x,y,color="#f8f8f2",size=1.2){ ctx().save(); ctx().fillStyle=color; ctx().scale(1,-1); ctx().textAlign="center"; ctx().font=`bold ${size}px 'Noto Sans KR', sans-serif`; ctx().fillText(text,x,-y); ctx().restore(); }
+
+  function drawOnCanvas(){ try{ setupCanvas(); const script=problemData.scenes?.[state.currentSceneIndex]?.canvas_script; if(script && script.trim()){ try{ eval(script); }catch(e){ console.error('Canvas Script Error:',e); showToast('Canvas script error.'); } } }catch(err){ console.error('drawOnCanvas error',err); } }
+
+  function initializeVisuals(){ ui.ctx = ui.canvas.getContext('2d',{alpha:false}); if(problemData?.metadata?.imageUrl){ ui.visualsBG.src = problemData.metadata.imageUrl; } ui.visualsBG.style.filter = problemData?.metadata?.invertImageForDarkBG?"invert(1) hue-rotate(180deg) brightness(1.1)":"none"; setupCanvas(); }
+
+  function initializeSolution(){ const map=new Map(); (problemData.solutionSteps||[]).forEach(s=>map.set(s.step_id,s)); (problemData.scenes||[]).forEach((scene,idx)=>{ const page=document.createElement('div'); page.id=`page-${idx}`; page.className='solution-page'; (scene.solutionHighlightIds||[]).forEach(id=>{ const sd=map.get(id); if(sd){ const el=document.createElement('div'); el.id=`${id}-p${idx}`; el.className=`solution-step ${sd.is_title?'is-title':''}`; el.innerHTML=sd.latex; page.appendChild(el); } }); ui.solutionWrapper.appendChild(page); }); }
+
+  async function measureAudioDurations(){ const n=(problemData.scenes||[]).length; const urls=problemData.audioUrls||[]; if(!n){ state.sceneDurations=[]; state.sceneStartTimes=[]; state.totalDuration=0; return; }
+    const loadOne=(url)=>new Promise(res=>{ if(!url||typeof url!=="string"||!url.trim()) return res(5.0); const a=new Audio(); a.preload='metadata'; a.crossOrigin='anonymous'; const done=d=>res(Number.isFinite(d)&&d>0?d:5.0); a.onloadedmetadata=()=>done(a.duration); a.onerror=()=>done(5.0); a.src=url; try{a.load();}catch{done(5.0);} });
+    const ps=Array.from({length:n},(_,i)=>{ if(i<urls.length) ui.loadingProgress.textContent=`Loading audio metadata: ${i+1} / ${urls.length}`; return loadOne(urls[i]); });
+    const ds=await Promise.all(ps); state.sceneDurations=ds; state.totalDuration=ds.reduce((a,b)=>a+b,0); let cum=0; state.sceneStartTimes=ds.map(d=>{const s=cum; cum+=d; return s;}); }
+
+  function applyLayoutForScene(scene){
+    const hasImage = !!(problemData?.metadata?.imageUrl && scene?.useImage !== false);
+    const hasCanvas = !!(scene?.canvas_script && scene.canvas_script.trim());
+    let cls = 'layout-case-1';
+    if (hasImage && !hasCanvas) cls = 'layout-case-2';
+    else if (!hasImage && hasCanvas) cls = 'layout-case-3';
+    else if (hasImage && hasCanvas) cls = 'layout-case-4';
+    ui.mainContainer.classList.remove('layout-case-1','layout-case-2','layout-case-3','layout-case-4');
+    ui.mainContainer.classList.add(cls);
+    if (cls === 'layout-case-1') { ui.visualsPanel.style.display = 'none'; } else { ui.visualsPanel.style.display = 'flex'; }
+    ui.imageWrapper.style.display = (hasImage && cls !== 'layout-case-3') ? 'block' : (cls==='layout-case-2'||cls==='layout-case-4' ? 'block' : 'none');
+    ui.graphWrapper.style.display = (hasCanvas && cls !== 'layout-case-2') ? 'block' : (cls==='layout-case-3'||cls==='layout-case-4' ? 'block' : 'none');
+    const zoomSolo = !!problemData?.metadata?.imageZoomWhenSolo;
+    if (cls==='layout-case-2' && zoomSolo) ui.mainContainer.classList.add('layout-image-zoom'); else ui.mainContainer.classList.remove('layout-image-zoom');
+  }
+
+  function showScene(index, seekTime=0, forcePlay=null){
+    if(!state.isReady || index<0 || index>=(problemData.scenes?.length||0)) return;
+    const shouldResume = forcePlay!==null ? forcePlay : state.isPlaying;
+    if(state.isPlaying) setPlayingState(false);
+    state.currentSceneIndex = index;
+    const active = document.querySelector('.solution-page.is-active');
+    if(active){ active.classList.remove('is-active'); active.querySelectorAll('.is-active-step').forEach(el=>el.classList.remove('is-active-step')); }
+    const page = document.getElementById(`page-${index}`); if(page){ page.classList.add('is-active'); page.scrollTop=0; }
+    const scene = problemData.scenes?.[index] || {};
+    (scene.solutionHighlightIds||[]).forEach(id=>{ const el=document.getElementById(`${id}-p${index}`); if(el) el.classList.add('is-active-step'); });
+    applyLayoutForScene(scene);
+    const url=(problemData.audioUrls&&problemData.audioUrls[index])||"";
+    const t=Math.max(0,seekTime);
+    state.isSilentScene = !(url && url.trim());
+    state.currentTimeInScene = t;
+    if(!state.isSilentScene){
+      ui.audio.onloadeddata=null; ui.audio.oncanplay=null;
+      const resume=()=>{ try{ ui.audio.currentTime=t; }catch(e){} if(shouldResume) setPlayingState(true); };
+      ui.audio.addEventListener('loadeddata',resume,{once:true});
+      ui.audio.addEventListener('canplay',resume,{once:true});
+      ui.audio.src=url; try{ ui.audio.load(); }catch(e){}
+      if(ui.audio.readyState>=HTMLMediaElement.HAVE_FUTURE_DATA) resume();
+    } else { ui.audio.src=""; if(shouldResume) setPlayingState(true); }
+    drawOnCanvas();
+    updateUI();
+  }
+
+  let rafId=null; function animationLoop(){ if(state.isPlaying && state.isReady){ updateUI(); rafId=requestAnimationFrame(animationLoop);} else { rafId=null; } }
+  function startLoop(){ if(!rafId) rafId=requestAnimationFrame(animationLoop); }
+
+  function setPlayingState(play){ if(!state.isReady) return; if(play){ if(state.isEnded){ state.isEnded=false; showScene(0,0,true); return;} state.scenePlaybackStartTime=performance.now(); if(!state.isSilentScene){ const p=ui.audio.play(); if(p) p.catch(()=>showToast('Audio play failed')); } state.isPlaying=true; startLoop(); } else { if(state.isPlaying){ if(state.isSilentScene){ const e=(performance.now()-state.scenePlaybackStartTime)/1000; state.currentTimeInScene += e; } else { state.currentTimeInScene = ui.audio.currentTime||0; ui.audio.pause(); } } state.isPlaying=false; } updatePlayPauseButton(); }
+  function handleSceneEnd(){ if(!state.isReady||state.isEnded) return; if(state.currentSceneIndex < problemData.scenes.length-1){ showScene(state.currentSceneIndex+1,0,true); } else { state.isEnded=true; setPlayingState(false); updateUI(true); } }
+  function updateUI(force=false){ if(!state.isReady) return; if(force){ ui.progressBar.style.width='100%'; ui.timeDisplay.textContent=`${formatTime(state.totalDuration)} / ${formatTime(state.totalDuration)}`; updatePlayPauseButton(); return; }
+    const dur=state.sceneDurations[state.currentSceneIndex]||0; let t=0; if(state.currentSceneIndex>=0){ if(!state.isSilentScene){ t=ui.audio.currentTime||0; } else { t=state.currentTimeInScene; if(state.isPlaying){ const e=(performance.now()-state.scenePlaybackStartTime)/1000; t+=e; } } }
+    if(state.isPlaying && dur>0 && t>=dur-1e-3){ t=dur; handleSceneEnd(); return; }
+    let abs=0; if(state.currentSceneIndex>=0 && state.sceneStartTimes.length>state.currentSceneIndex){ abs=state.sceneStartTimes[state.currentSceneIndex]+t; }
+    const prog=state.totalDuration>0?Math.min(abs/state.totalDuration,1):0; ui.progressBar.style.width=`${prog*100}%`; ui.timeDisplay.textContent=`${formatTime(abs)} / ${formatTime(state.totalDuration)}`; updatePlayPauseButton(); }
+  function updatePlayPauseButton(){ let label=""; if(state.isEnded){ ui.playPauseBtn.textContent='↻'; label='다시 재생'; } else if(state.isPlaying){ ui.playPauseBtn.textContent='❚❚'; label='일시 정지'; } else { ui.playPauseBtn.textContent='▶'; label='재생'; } ui.playPauseBtn.setAttribute('aria-label',label); }
+
+  ui.playPauseBtn.addEventListener('click',()=>{ if(!state.isReady) return; setPlayingState(!state.isPlaying); });
+  ui.timeline.addEventListener('click',(e)=>{ if(!state.isReady||state.totalDuration<=0) return; const was=state.isPlaying; const r=ui.timeline.getBoundingClientRect(); const target=(e.clientX-r.left)/r.width*state.totalDuration; let idx=state.sceneStartTimes.findIndex((st,i)=> target>=st && target<st+state.sceneDurations[i]); if(idx===-1) idx=state.sceneStartTimes.length-1; const seek=Math.max(0, target - state.sceneStartTimes[idx]); if(state.isEnded) state.isEnded=false; showScene(idx, seek, was); });
+  ui.audio.addEventListener('ended',()=>{ if(!state.isSilentScene) handleSceneEnd(); });
+
+  function formatTime(s){ if(!isFinite(s)||s<0) s=0; const m=Math.floor(s/60); const sec=Math.floor(s%60); return `${m}:${sec<10?'0':''}${sec}`; }
+  async function waitForMathJax(){ const start=performance.now(); while(!window.MathJax || !MathJax.startup || !MathJax.typesetPromise){ await new Promise(r=>setTimeout(r,30)); if(performance.now()-start>10000) throw new Error('MathJax load timeout'); } }
+
+  async function initializePlayer(){ if(!problemData||problemData.placeholder===true){ ui.loading.innerHTML='Error: Problem data invalid.'; return; }
+    ui.audio.crossOrigin='anonymous'; window.addEventListener('resize',handleResize);
+    initializeVisuals(); initializeSolution(); handleResize();
+    try{ await waitForMathJax(); await MathJax.startup.promise; await MathJax.typesetPromise([ui.solutionWrapper]); await measureAudioDurations(); state.isReady=true; ui.loading.style.display='none'; showScene(0,0,false); updateUI(); }catch(err){ console.error('Init Error:',err); ui.loading.innerHTML='Error during initialization (MathJax/Audio).'; }
+  }
+
+  document.addEventListener('keydown',(e)=>{ if(!state.isReady) return; if(e.code==='Space'){ e.preventDefault(); setPlayingState(!state.isPlaying); } else if(e.key==='Home'){ e.preventDefault(); if(state.isEnded) state.isEnded=false; showScene(0,0,null); updateUI(); } else if(e.key==='End'){ e.preventDefault(); state.isEnded=true; setPlayingState(false); updateUI(); } else if(e.key==='ArrowRight'){ e.preventDefault(); seekRelative(5); } else if(e.key==='ArrowLeft'){ e.preventDefault(); seekRelative(-5); } });
+  function seekRelative(d){ if(state.totalDuration<=0) return; const abs=(state.sceneStartTimes[state.currentSceneIndex]||0)+(!state.isSilentScene?(ui.audio.currentTime||0):(state.currentTimeInScene+(state.isPlaying?(performance.now()-state.scenePlaybackStartTime)/1000:0))); const tgt=Math.max(0, Math.min(state.totalDuration-0.001, abs+d)); let idx=state.sceneStartTimes.findIndex((st,i)=> tgt>=st && tgt<st+state.sceneDurations[i]); if(idx===-1) idx=state.sceneStartTimes.length-1; const seek=Math.max(0, tgt - state.sceneStartTimes[idx]); const was=state.isPlaying; showScene(idx, seek, was); }
+
+  (function safeInit(){ const start=()=>initializePlayer(); if(document.readyState==='loading'){ document.addEventListener('DOMContentLoaded',start,{once:true}); } else { start(); } })();
+})();
+</script>
+</body>
+</html>
