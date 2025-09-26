@@ -36,13 +36,15 @@ export function defaultRows(){
 }
 export function templates(){
   return {
-    roadmapItem: `<tr class="draggable-item"><td class="p-3" contenteditable="true" placeholder="일정"></td><td class="p-3" contenteditable="true" placeholder="신규 과업"></td><td class="p-3" contenteditable="true" placeholder="담당자"></td><td class="p-3" contenteditable="true" placeholder="상태"></td><td class="p-3" contenteditable="true" placeholder="P0/P1/P2"></td><td class="p-3" contenteditable="true" placeholder="YYYY-MM-DD"></td><td class="p-3" contenteditable="true" placeholder="의존성"></td><td class="p-3">${manageControls}</td></tr>`
+    roadmapItem: `<tr class="draggable-item"><td class="p-3" contenteditable="true" placeholder="일정"></td><td class="p-3" contenteditable="true" placeholder="신규 과업"></td><td class="p-3" contenteditable="true" placeholder="담당자"></td><td class="p-3" contenteditable="true" placeholder="상태"></td><td class="p-3" contenteditable="true" placeholder="P0/P1/P2"></td><td class="p-3" contenteditable="true" placeholder="YYYY-MM-DD"></td><td class="p-3" contenteditable="true" placeholder="의존성"></td><td class="p-3">${manageControls}</td></tr>`,
+    roadmapCategory: `<tr class="roadmap-category"><td class="p-3 font-bold text-slate-700"><span class="category-title" contenteditable="true">새 단계</span></td><td colspan="6" class="p-3 text-right"><button class="add-sub-item-btn add-roadmap-item">+ 과업 추가</button></td><td class="p-3">${manageControls}</td></tr>`
   };
 }
 export function initSortable(editor){
-  const tbody = editor.querySelector('.sortable-list');
+  const tbody = editor.querySelector('tbody.sortable-list');
   if (tbody && window.Sortable){
     new window.Sortable(tbody, { animation:150, handle:'.draggable-item', draggable:'.draggable-item',
       onEnd: ()=>{} });
   }
 }
+export { updateNumbering };

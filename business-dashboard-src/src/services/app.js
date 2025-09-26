@@ -29,7 +29,9 @@ function bindCommonHandlers(docId, editorEl, feature){
     if (btn.matches('.add-plan-item') || btn.matches('.add-roadmap-item')){
       let last = row, next = row.nextElementSibling;
       while(next && !next.matches('.plan-category, .roadmap-category')){ last = next; next = next.nextElementSibling; }
-      last.insertAdjacentHTML('afterend', btn.matches('.add-plan-item') ? feature.templates().planItem : feature.templates().roadmapItem);
+      const t = feature.templates && feature.templates();
+      const html = btn.matches('.add-plan-item') ? t?.planItem : t?.roadmapItem;
+      if (html) last.insertAdjacentHTML('afterend', html);
     } else if (btn.matches('.lock-btn')){
       btn.classList.toggle('unlocked');
       row.querySelector('.delete-btn')?.classList.toggle('unlocked');
@@ -37,9 +39,9 @@ function bindCommonHandlers(docId, editorEl, feature){
     } else if (btn.matches('.delete-btn.unlocked')){
       if (row.matches('.plan-category, .roadmap-category, .journal-entry-header')){
         const toDelete=[row]; let next=row.nextElementSibling;
-        while(next && !next.matches('.plan-category, .roadmap-category, .journal-entry-header')){ toDelete.push(next); next=next.nextElementSibling; }
+        while (next && !next.matches('.plan-category, .roadmap-category, .journal-entry-header')){ toDelete.push(next); next=next.nextElementSibling; }
         toDelete.forEach(r=>r.remove());
-        if (row.matches('.plan-category, .roadmap-category')) feature.updateNumbering(editorEl);
+        if (row.matches('.plan-category, .roadmap-category') && feature.updateNumbering) feature.updateNumbering(editorEl);
       } else if (row.matches('.draggable-item')){ row.remove(); }
     }
     if (shouldSave) debouncedSave(docId, editorEl.innerHTML);
@@ -54,9 +56,10 @@ export async function startApp(){
   firebase.onAuth(async (user)=>{
     if (user){
       setStatus('connected','연결됨');
+
       Object.entries(registry.items()).forEach(([docId, feature])=>{
         const editor = document.getElementById(`${docId}-editor`);
-        const unsub = firebase.subscribe([`artifacts/${getAppId()}/public/data/businessDocs`, docId], (snap)=>{
+        firebase.subscribe([`artifacts/${getAppId()}/public/data/businessDocs`, docId], (snap)=>{
           const initial = feature.initialShell();
           const defaults = feature.defaultRows();
           if (snap.exists()){
@@ -75,8 +78,57 @@ export async function startApp(){
           }
           if (feature.initSortable) feature.initSortable(editor);
         }, (e)=>{ console.error(e); setStatus('error','동기화 오류'); });
+
         bindCommonHandlers(docId, editor, feature);
       });
+
+      // 여기서 +버튼 리스너 연결
+      const editorsMap = registry.items();
+
+      const addJournal = document.getElementById('add-journal-entry');
+      if (addJournal) {
+        addJournal.addEventListener('click', () => {
+          const ed = document.getElementById('journal-editor');
+          const tbody = ed?.querySelector('tbody');
+          const feature = editorsMap['journal'];
+          const t = feature?.templates && feature.templates();
+          if (tbody && t?.entry) {
+            tbody.insertAdjacentHTML('beforeend', t.entry);
+            debouncedSave('journal', ed.innerHTML);
+          }
+        });
+      }
+
+      const addRoadmap = document.getElementById('add-roadmap-category');
+      if (addRoadmap) {
+        addRoadmap.addEventListener('click', () => {
+          const ed = document.getElementById('roadmap-editor');
+          const tbody = ed?.querySelector('tbody');
+          const feature = editorsMap['roadmap'];
+          const t = feature?.templates && feature.templates();
+          if (tbody && t?.roadmapCategory) {
+            tbody.insertAdjacentHTML('beforeend', t.roadmapCategory);
+            if (feature.updateNumbering) feature.updateNumbering(ed);
+            debouncedSave('roadmap', ed.innerHTML);
+          }
+        });
+      }
+
+      const addPlan = document.getElementById('add-plan-category');
+      if (addPlan) {
+        addPlan.addEventListener('click', () => {
+          const ed = document.getElementById('plan-editor');
+          const tbody = ed?.querySelector('tbody');
+          const feature = editorsMap['plan'];
+          const t = feature?.templates && feature.templates();
+          if (tbody && t?.planCategory) {
+            tbody.insertAdjacentHTML('beforeend', t.planCategory);
+            if (feature.updateNumbering) feature.updateNumbering(ed);
+            debouncedSave('plan', ed.innerHTML);
+          }
+        });
+      }
+
     } else {
       setStatus('connecting','로그인 필요');
     }

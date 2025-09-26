@@ -42,13 +42,15 @@ export function defaultRows(){
 }
 export function templates(){
   return {
-    planItem: `<tr class="draggable-item"><td class="p-3 font-medium" contenteditable="true" placeholder="소항목"></td><td class="p-3" contenteditable="true" placeholder="[세부 내용을 입력하세요]"></td><td class="p-3">${manageControls}</td></tr>`
+    planItem: `<tr class="draggable-item"><td class="p-3 font-medium" contenteditable="true" placeholder="소항목"></td><td class="p-3" contenteditable="true" placeholder="[세부 내용을 입력하세요]"></td><td class="p-3">${manageControls}</td></tr>`,
+    planCategory: `<tr class="plan-category"><td class="p-3 font-bold text-slate-700"><span class="category-title" contenteditable="true">새 카테고리</span></td><td class="p-3 text-right"><button class="add-sub-item-btn add-plan-item">+ 소항목 추가</button></td><td class="p-3">${manageControls}</td></tr>`
   };
 }
 export function initSortable(editor){
-  const tbody = editor.querySelector('.sortable-list');
+  const tbody = editor.querySelector('tbody.sortable-list');
   if (tbody && window.Sortable){
     new window.Sortable(tbody, { animation:150, handle:'.draggable-item', draggable:'.draggable-item',
       onEnd: ()=>{} });
   }
 }
+export { updateNumbering };
