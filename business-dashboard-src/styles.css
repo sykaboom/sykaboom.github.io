@@ -1,0 +1,50 @@
+/* Base UI */
+body { font-family: 'Inter','Pretendard',sans-serif; }
+.tab-button.active { border-color:#3b82f6; color:#3b82f6; font-weight:600; }
+[contenteditable="true"]:empty:before { content: attr(placeholder); color:#94a3b8; pointer-events:none; display:block; }
+[contenteditable="true"]:focus { outline:none; background-color:#eff6ff; border-radius:4px; }
+.content-card { background:#fff; padding:1.5rem; border-radius:.5rem; box-shadow:0 1px 2px 0 rgb(0 0 0 / .05); }
+
+/* Tables */
+table { table-layout:auto; width:100%; border-collapse:collapse; }
+thead { background-color:#f8fafc; }
+th, td {
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+  border:1px solid #cbd5e1;
+  padding:12px;
+  vertical-align:top;
+}
+tbody tr:nth-child(odd){ background-color:#f8fafc; }
+tbody tr:hover{ background-color:#f1f5f9; }
+
+/* Roadmap */
+.roadmap-scroll{ overflow-x:auto; }
+.roadmap-table{ table-layout:auto; min-width:880px; }
+
+/* Buttons */
+.add-row-btn {
+  background-color:#3b82f6; color:#fff; font-weight:700;
+  padding:.5rem 1rem; border-radius:9999px;
+  transition:background-color .2s ease;
+  display:flex; align-items:center;
+}
+.add-row-btn:hover{ background-color:#2563eb; }
+.add-row-btn svg{ height:1.25rem; width:1.25rem; margin-right:.5rem; }
+.add-sub-item-btn{
+  font-size:.75rem; background:#f1f5f9; color:#64748b; font-weight:600;
+  padding:.25rem .5rem; border-radius:.375rem; transition:background-color .2s ease;
+}
+.add-sub-item-btn:hover{ background:#e2e8f0; }
+
+/* Controls */
+.control-btn{ padding:.25rem; border-radius:9999px; transition:color .2s ease; cursor:pointer; }
+.control-btn.lock-btn{ color:#475569; }
+.control-btn.lock-btn.unlocked{ color:#d1d5db; }
+.control-btn.lock-btn.unlocked:hover{ color:#3b82f6; }
+.control-btn.delete-btn{ color:#cbd5e1; cursor:not-allowed; }
+.control-btn.delete-btn.unlocked{ color:#94a3b8; cursor:pointer; }
+.control-btn.delete-btn.unlocked:hover{ color:#dc2626; }
+
+.draggable-item{ cursor:grab; }
+.sortable-ghost{ background-color:#eff6ff; }
