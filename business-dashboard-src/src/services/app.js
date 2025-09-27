@@ -1,171 +1,138 @@
-// business-dashboard-src/src/services/app.js
+// src/services/app.js
+// - 초기 자동 로그인 없음
+// - 리디렉션 복귀 결과만 처리하여 세션을 복원
+// - 버튼 클릭 시에만 로그인 시작
+// - 로그인 상태에 따라 UI 토글
+
 import { firebase } from './firebase.js';
-import { setStatus } from '../ui/status.js';
-import { registry } from './registry.js';
-import { debounce } from '../utils/debounce.js';
 
-const debouncedSave = debounce(async (docId, html)=>{
-  try {
-    await firebase.save([`artifacts/${getAppId()}/public/data/businessDocs`, docId], html);
-    setStatus('connected', '저장됨');
-  } catch(e) {
-    console.error(e);
-    setStatus('error','저장 오류');
-  }
-}, 800);
+// 상태 표시 도우미
+function setStatus(kind, text) {
+  const dot  = document.getElementById('status-dot');
+  const desc = document.getElementById('status-text');
+  if (desc) desc.textContent = text || '';
 
-function getAppId(){
-  return typeof window.__app_id !== 'undefined' ? window.__app_id : 'default-app-id';
+  if (!dot) return;
+  const map = {
+    idle: 'bg-slate-300',
+    connecting: 'bg-amber-500',
+    connected: 'bg-emerald-500',
+    error: 'bg-rose-500'
+  };
+  dot.className = 'inline-block w-2.5 h-2.5 rounded-full ' + (map[kind] || map.idle);
 }
 
-function bindCommonHandlers(docId, editorEl, feature){
-  editorEl.addEventListener('input', ()=>{
-    setStatus('connected', '저장 중...');
-    debouncedSave(docId, editorEl.innerHTML);
-  });
-
-  editorEl.addEventListener('click', (e)=>{
-    const btn = e.target.closest('button');
-    if (!btn) return;
-    const row = btn.closest('tr');
-    let shouldSave = true;
-
-    if (btn.matches('.add-plan-item') || btn.matches('.add-roadmap-item')){
-      let last = row, next = row.nextElementSibling;
-      while(next && !next.matches('.plan-category, .roadmap-category')){
-        last = next; next = next.nextElementSibling;
-      }
-      const t = feature.templates && feature.templates();
-      const html = btn.matches('.add-plan-item') ? t?.planItem : t?.roadmapItem;
-      if (html) last.insertAdjacentHTML('afterend', html);
-    } else if (btn.matches('.lock-btn')){
-      btn.classList.toggle('unlocked');
-      row.querySelector('.delete-btn')?.classList.toggle('unlocked');
-      if (btn.classList.contains('unlocked')) btn.setAttribute('data-unlocked','true');
-      else btn.removeAttribute('data-unlocked');
-    } else if (btn.matches('.delete-btn.unlocked')){
-      if (row.matches('.plan-category, .roadmap-category, .journal-entry-header')){
-        const toDelete=[row]; let next=row.nextElementSibling;
-        while(next && !next.matches('.plan-category, .roadmap-category, .journal-entry-header')){
-          toDelete.push(next); next=next.nextElementSibling;
-        }
-        toDelete.forEach(r=>r.remove());
-        if (row.matches('.plan-category, .roadmap-category') && feature.updateNumbering){
-          feature.updateNumbering(editorEl);
-        }
-      } else if (row.matches('.draggable-item')){
-        row.remove();
-      }
-    }
-    if (shouldSave) debouncedSave(docId, editorEl.innerHTML);
-  });
+// 사용자 친화 에러 메시지
+function humanizeAuthError(e) {
+  const msg = String(e?.code || e?.message || e);
+  if (msg.includes('unauthorized-domain'))
+    return '허용되지 않은 도메인입니다. Firebase Authentication > 설정 > 허용된 도메인에 현재 사이트를 추가하세요.';
+  if (msg.includes('popup-blocked'))
+    return '브라우저가 팝업을 차단했습니다. 주소창의 팝업 차단을 해제한 뒤 다시 시도하세요.';
+  if (msg.includes('popup-closed'))
+    return '로그인 팝업이 닫혔습니다. 다시 시도하세요.';
+  if (msg.includes('network'))
+    return '네트워크 오류입니다. 인터넷 연결을 확인하세요.';
+  return '로그인에 실패했습니다.';
 }
 
-export async function startApp(){
-  try {
-    firebase.init();
-  } catch(e) {
-    console.error('Firebase 초기화 실패:', e);
-    setStatus('error','Firebase 초기화 실패');
-    return;
-  }
-
-  firebase.onAuth(async (user)=>{
-    if (user){
-      setStatus('connected','연결됨');
-
-      Object.entries(registry.items()).forEach(([docId, feature])=>{
-        const editor = document.getElementById(`${docId}-editor`);
-        firebase.subscribe([`artifacts/${getAppId()}/public/data/businessDocs`, docId], (snap)=>{
-          const initial = feature.initialShell();
-          const defaults = feature.defaultRows();
-          if (snap.exists()){
-            const remote = snap.data().content;
-            if (!editor.contains(document.activeElement) && editor.innerHTML !== remote){
-              editor.innerHTML = remote;
-              editor.querySelectorAll('.lock-btn[data-unlocked="true"]').forEach(btn=>{
-                btn.classList.add('unlocked');
-                btn.closest('tr').querySelector('.delete-btn')?.classList.add('unlocked');
-              });
-            }
-          } else {
-            editor.innerHTML = initial;
-            const tbody = editor.querySelector('tbody');
-            if (tbody){
-              tbody.innerHTML = defaults;
-              debouncedSave(docId, editor.innerHTML);
-            }
-          }
-          if (feature.initSortable) feature.initSortable(editor);
-        }, (e)=>{
-          console.error(e);
-          setStatus('error','동기화 오류');
-        });
-
-        bindCommonHandlers(docId, editor, feature);
-      });
-
-      // +버튼 리스너
-      const editorsMap = registry.items();
-
-      const addJournal = document.getElementById('add-journal-entry');
-      if (addJournal) {
-        addJournal.addEventListener('click', () => {
-          const ed = document.getElementById('journal-editor');
-          const tbody = ed?.querySelector('tbody');
-          const feature = editorsMap['journal'];
-          const t = feature?.templates && feature.templates();
-          if (tbody && t?.entry) {
-            tbody.insertAdjacentHTML('beforeend', t.entry);
-            debouncedSave('journal', ed.innerHTML);
-          }
-        });
-      }
-
-      const addRoadmap = document.getElementById('add-roadmap-category');
-      if (addRoadmap) {
-        addRoadmap.addEventListener('click', () => {
-          const ed = document.getElementById('roadmap-editor');
-          const tbody = ed?.querySelector('tbody');
-          const feature = editorsMap['roadmap'];
-          const t = feature?.templates && feature.templates();
-          if (tbody && t?.roadmapCategory) {
-            tbody.insertAdjacentHTML('beforeend', t.roadmapCategory);
-            if (feature.updateNumbering) feature.updateNumbering(ed);
-            debouncedSave('roadmap', ed.innerHTML);
-          }
-        });
-      }
-
-      const addPlan = document.getElementById('add-plan-category');
-      if (addPlan) {
-        addPlan.addEventListener('click', () => {
-          const ed = document.getElementById('plan-editor');
-          const tbody = ed?.querySelector('tbody');
-          const feature = editorsMap['plan'];
-          const t = feature?.templates && feature.templates();
-          if (tbody && t?.planCategory) {
-            tbody.insertAdjacentHTML('beforeend', t.planCategory);
-            if (feature.updateNumbering) feature.updateNumbering(ed);
-            debouncedSave('plan', ed.innerHTML);
-          }
-        });
-      }
-
-    } else {
-      setStatus('connecting','로그인 필요');
+// 로그인/로그아웃 버튼 이벤트 연결
+function bindAuthButtons() {
+  document.getElementById('login-btn')?.addEventListener('click', async () => {
+    setStatus('connecting', '로그인 중…');
+    try {
+      await firebase.login();
+      // signInWithPopup 성공 시 onAuthStateChanged에서 후속 처리
+    } catch (e) {
+      console.error('[AUTH] login failed:', e);
+      setStatus('error', '인증 실패');
+      alert(humanizeAuthError(e));
     }
   });
 
-  // 로그인 시도 + UI 에러 표시
+  document.getElementById('logout-btn')?.addEventListener('click', async () => {
+    try {
+      await firebase.logout();
+      // onAuthStateChanged에서 UI가 원복됩니다.
+    } catch (e) {
+      console.error('[AUTH] logout failed:', e);
+      alert('로그아웃 중 문제가 발생했습니다.');
+    }
+  });
+}
+
+// 로그인 상태에 따른 UI 토글
+function toggleAuthUI(user) {
+  const loginBtn  = document.getElementById('login-btn');
+  const logoutBtn = document.getElementById('logout-btn');
+  const whoami    = document.getElementById('whoami');
+  const appRoot   = document.getElementById('app-root');
+  const guestHint = document.getElementById('guest-hint');
+
+  if (user) {
+    if (loginBtn)  loginBtn.classList.add('hidden');
+    if (logoutBtn) logoutBtn.classList.remove('hidden');
+    if (whoami)    whoami.textContent = user.email || '';
+    if (appRoot)   appRoot.classList.remove('hidden');
+    if (guestHint) guestHint.classList.add('hidden');
+    setStatus('connected', '연결됨');
+  } else {
+    if (loginBtn)  loginBtn.classList.remove('hidden');
+    if (logoutBtn) logoutBtn.classList.add('hidden');
+    if (whoami)    whoami.textContent = '';
+    if (appRoot)   appRoot.classList.add('hidden');
+    if (guestHint) guestHint.classList.remove('hidden');
+    setStatus('idle', '로그인 필요');
+  }
+}
+
+// 앱 시작
+(async function start() {
   try {
-    await firebase.login();
+    // Firebase 초기화 및 리디렉션 로그인 결과 1회 처리
+    await firebase.bootstrap();
+    bindAuthButtons();
+
+    // 실시간 인증 상태 관찰
+    firebase.onAuth(async (user) => {
+      toggleAuthUI(user);
+
+      // 로그인 후에만 Firestore 데이터 구독/렌더
+      if (user) {
+        // 예시: 특정 문서 구독
+        // const unsub = firebase.subscribe(
+        //   ['artifacts','appId','public','data','businessDocs','docId'],
+        //   (snap) => {
+        //     const data = snap.data();
+        //     renderApp(data);
+        //   },
+        //   (err) => console.error('onSnapshot error:', err)
+        // );
+      }
+    });
   } catch (e) {
-    console.error(e);
-    if (String(e?.message || e).includes('auth-auto-login-aborted')){
-      setStatus('error','자동 로그인 중단됨: 브라우저의 쿠키/추적 차단 설정을 확인하세요.');
-    } else {
-      setStatus('error','인증 실패');
-    }
+    console.error('앱 시작 중 오류:', e);
+    setStatus('error', '앱 초기화 실패');
+    alert(String(e?.message || e));
   }
+})();
+
+// 필요한 경우: Firestore 콘텐츠 렌더 예시
+function renderApp(data) {
+  const root = document.getElementById('app-root');
+  if (!root) return;
+  root.innerHTML = `
+    <div class="text-sm text-slate-700">
+      <pre class="bg-slate-50 border rounded p-4 overflow-auto">${
+        data ? escapeHtml(JSON.stringify(data, null, 2)) : '데이터 없음'
+      }</pre>
+    </div>
+  `;
+}
+
+function escapeHtml(s) {
+  return String(s)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
 }
