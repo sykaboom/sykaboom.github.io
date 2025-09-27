@@ -1,10 +1,11 @@
-// /src/firebase.js (또는 기존 firebase.js 대체)
+// business-dashboard-src/src/services/firebase.js
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
 import {
   getAuth,
   onAuthStateChanged,
   signInWithCustomToken,
   GoogleAuthProvider,
+  signInWithPopup,
   signInWithRedirect,
   getRedirectResult,
   browserLocalPersistence,
@@ -16,8 +17,11 @@ import {
 
 export const firebase = (() => {
   let app, db, auth;
-  let redirectProcessed = false; // 이 탭에서 getRedirectResult를 한 번만 처리
-  const REDIRECT_FLAG = 'authRedirectInProgress'; // 중복 리다이렉트 방지용
+  let redirectProcessed = false;
+
+  const REDIRECT_FLAG = 'authRedirectInProgress';
+  const LAST_REDIRECT_TS = 'authRedirectTs';
+  const REDIRECT_COOLDOWN_MS = 15000; // 15초 내 재시도 금지
 
   function ensureConfig() {
     const cfg = typeof window.__firebase_config !== 'undefined'
@@ -31,24 +35,33 @@ export const firebase = (() => {
     return cfg;
   }
 
-  async function init() {
+  function init() {
     if (app) return { app, db, auth };
     const firebaseConfig = ensureConfig();
-
     app = initializeApp(firebaseConfig);
     db = getFirestore(app);
     auth = getAuth(app);
-
-    // 세션 유지: 새 탭/새로고침에도 로그인 유지
-    await setPersistence(auth, browserLocalPersistence);
-
     return { app, db, auth };
   }
 
-  // onAuthStateChanged를 Promise로 래핑해 최초 세션 확정까지 기다림
+  function now() { return Date.now(); }
+  function setRedirectFlag() {
+    sessionStorage.setItem(REDIRECT_FLAG, '1');
+    localStorage.setItem(LAST_REDIRECT_TS, String(now()));
+  }
+  function clearRedirectFlag() {
+    sessionStorage.removeItem(REDIRECT_FLAG);
+  }
+  function redirectRecently() {
+    const ts = Number(localStorage.getItem(LAST_REDIRECT_TS) || '0');
+    return ts && (now() - ts) < REDIRECT_COOLDOWN_MS;
+  }
+
+  // onAuthStateChanged를 Promise로 래핑
   function waitForAuthStateOnce() {
     return new Promise((resolve) => {
       const unsub = onAuthStateChanged(auth, (user) => {
+        if (user) clearRedirectFlag(); // 세션 확정되면 중복 리다이렉트 방지
         unsub();
         resolve(user);
       });
@@ -60,60 +73,85 @@ export const firebase = (() => {
     if (redirectProcessed) return;
     redirectProcessed = true;
     try {
-      await getRedirectResult(auth); // 필요 시 credential을 가져오고, 없으면 null
+      const result = await getRedirectResult(auth);
+      if (result && result.user) {
+        clearRedirectFlag();
+      }
     } catch (e) {
-      // credential-이슈 등은 콘솔에 남기되, 흐름은 막지 않음
+      // 권한 도메인 / 쿠키 이슈 등 -> 루프 방지를 위해 플래그는 해제
+      clearRedirectFlag();
       console.warn('getRedirectResult error:', e);
     }
   }
 
-  async function login() {
-    await init();
-
-    // 1) 커스텀 토큰 우선
-    if (typeof window.__initial_auth_token !== 'undefined' && window.__initial_auth_token) {
-      try {
-        await signInWithCustomToken(auth, window.__initial_auth_token);
-        return;
-      } catch (e) {
-        console.error('custom token sign-in failed:', e);
-        throw e;
-      }
-    }
-
-    // 2) 리다이렉트 결과 먼저 1회 처리
-    await processRedirectResultOnce();
-
-    // 3) 현재 세션 확정까지 대기
-    let user = auth.currentUser || await waitForAuthStateOnce();
-    if (user) return; // 이미 로그인 완료
-
-    // 4) 같은 탭에서 중복 리다이렉트 방지
-    if (sessionStorage.getItem(REDIRECT_FLAG) === '1') {
-      // 이미 리다이렉트 시작됨. onAuthStateChanged를 한 번 더 기다려봄.
-      user = await waitForAuthStateOnce();
-      if (user) return;
-      // 그래도 없으면 플래그를 해제하고 한 번 더 시도할 수 있도록 한다.
-      sessionStorage.removeItem(REDIRECT_FLAG);
-    }
-
-    // 5) 실제 리다이렉트 시작
+  async function tryPopupOrRedirect(provider) {
+    // 1) 팝업 우선(가능한 환경에서는 루프 발생 여지를 줄임)
     try {
-      const provider = new GoogleAuthProvider();
-      provider.setCustomParameters({ prompt: 'select_account' });
-      sessionStorage.setItem(REDIRECT_FLAG, '1');
-      await signInWithRedirect(auth, provider);
-      // 이후 브라우저가 이동하므로 아래 코드는 정상적이면 실행되지 않음
+      await signInWithPopup(auth, provider);
+      clearRedirectFlag();
+      return;
     } catch (e) {
-      sessionStorage.removeItem(REDIRECT_FLAG);
-      console.error('signInWithRedirect failed:', e);
-      throw e;
+      // 팝업 차단/미지원 환경이면 리다이렉트 폴백
+      if (redirectRecently()) {
+        // 바로 직전에 리다이렉트 시도했다면, 상태 확정을 한 번 더 기다린다.
+        const u = await waitForAuthStateOnce();
+        if (u) return;
+      }
+      try {
+        setRedirectFlag();
+        await signInWithRedirect(auth, provider);
+      } catch (e2) {
+        clearRedirectFlag();
+        console.error('signInWithRedirect failed:', e2);
+        throw e2;
+      }
     }
   }
 
+  async function login() {
+    init();
+
+    // 영속 세션
+    try { await setPersistence(auth, browserLocalPersistence); } catch (e) { console.warn('setPersistence warning:', e); }
+
+    // 1) 커스텀 토큰 우선(있을 때만)
+    if (typeof window.__initial_auth_token !== 'undefined' && window.__initial_auth_token) {
+      try {
+        await signInWithCustomToken(auth, window.__initial_auth_token);
+        clearRedirectFlag();
+        return;
+      } catch (e) {
+        console.error('custom token sign-in failed:', e);
+        // 커스텀 토큰 실패 시 아래 구글 로그인으로 폴백
+      }
+    }
+
+    // 2) 리다이렉트 복귀 결과부터 처리
+    await processRedirectResultOnce();
+
+    // 3) 이미 로그인되어 있으면 종료
+    let user = auth.currentUser || await waitForAuthStateOnce();
+    if (user) { clearRedirectFlag(); return; }
+
+    // 4) 같은 탭에서 이미 리다이렉트 시도 중이면, 한 번 더 상태를 기다림
+    if (sessionStorage.getItem(REDIRECT_FLAG) === '1') {
+      user = await waitForAuthStateOnce();
+      if (user) { clearRedirectFlag(); return; }
+      // 그래도 없으면 플래그 해제 후 재시도 허용
+      clearRedirectFlag();
+    }
+
+    // 5) 실제 로그인 진입(팝업→리다이렉트)
+    const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' });
+    await tryPopupOrRedirect(provider);
+  }
+
   function onAuth(cb) {
-    // 앱 전역에서 재사용 가능
-    return onAuthStateChanged(auth, cb);
+    return onAuthStateChanged(auth, (user) => {
+      if (user) clearRedirectFlag();
+      cb(user);
+    });
   }
 
   function subscribe(docPath, onOk, onErr) {
@@ -121,11 +159,7 @@ export const firebase = (() => {
   }
 
   async function save(docPath, content) {
-    await setDoc(
-      doc(db, ...docPath),
-      { content, lastUpdated: serverTimestamp() },
-      { merge: true }
-    );
+    await setDoc(doc(db, ...docPath), { content, lastUpdated: serverTimestamp() }, { merge: true });
   }
 
   return { init, login, onAuth, subscribe, save };
