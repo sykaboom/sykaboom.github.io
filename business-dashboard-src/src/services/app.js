@@ -43,7 +43,54 @@ function toggleAuthUI(user){
 }
 
 // Common handlers for editor areas (save-on-input, row controls)
+
+
+// -- UI helpers for lock/delete display and cascade deletion --
+function syncRowUI(row){
+  if (!row) return;
+  const locked = row.dataset.locked === '1';
+  const lockBtn = row.querySelector('.lock-btn');
+  const delBtn  = row.querySelector('.delete-btn');
+  if (lockBtn){
+    lockBtn.classList.toggle('unlocked', !locked);
+  }
+  if (delBtn){
+    delBtn.classList.toggle('unlocked', !locked);
+  }
+}
+
+function syncAllRows(editorEl){
+  editorEl.querySelectorAll('tr').forEach(syncRowUI);
+}
+
+// Remove a category/header row and all its descendants until the next section header
+function deleteSectionRows(startRow){
+  if (!startRow) return;
+  const parent = startRow.parentElement;
+  let cur = startRow.nextElementSibling;
+  const isCategory = /category/.test(startRow.className);
+  const isJournalHeader = startRow.classList.contains('journal-entry-header');
+
+  startRow.remove();
+
+  if (isCategory){
+    while (cur && !/category/.test(cur.className)){
+      const next = cur.nextElementSibling;
+      cur.remove();
+      cur = next;
+    }
+  } else if (isJournalHeader){
+    while (cur && !cur.classList.contains('journal-entry-header')){
+      const next = cur.nextElementSibling;
+      cur.remove();
+      cur = next;
+    }
+  }
+}
 function bindCommonHandlers(docId, editorEl, feature){
+  // initial sync of lock/delete UI
+  syncAllRows(editorEl);
+
   // autosave on input
   editorEl.addEventListener('input', ()=>{
     setStatus('connecting', '저장 중…');
@@ -61,7 +108,14 @@ function bindCommonHandlers(docId, editorEl, feature){
 
     // delete row
     if (btn.classList.contains('delete-btn') && row){
-      row.remove();
+      // If locked, ignore deletion
+      if (row.dataset.locked === '1') return;
+      // Delete entire section when deleting a category or journal header
+      if (/category/.test(row.className) || row.classList.contains('journal-entry-header')){
+        deleteSectionRows(row);
+      } else {
+        row.remove();
+      }
       didMutate = true;
     }
 
@@ -72,6 +126,8 @@ function bindCommonHandlers(docId, editorEl, feature){
       row.querySelectorAll('[contenteditable]')?.forEach(el=>{
         el.setAttribute('contenteditable', nowLocked ? 'false' : 'true');
       });
+      // Reflect visual state: when unlocked, trash is bold and lock is light; when locked, trash is light and lock is bold
+      syncRowUI(row);
       didMutate = true;
     }
 
