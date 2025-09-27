@@ -134,5 +134,13 @@ export async function startApp(){
     }
   });
 
-  try{ await firebase.login(); }catch(e){ console.error(e); setStatus('error','인증 실패'); }
+  try {
+  await firebase.login();
+} catch (e) {
+  console.error(e);
+  if (String(e?.message || e).includes('auth-auto-login-aborted')) {
+    setStatus('error', '자동 로그인 중단됨: 브라우저의 쿠키/추적 차단 설정을 확인하세요.');
+  } else {
+    setStatus('error', '인증 실패');
+  }
 }
