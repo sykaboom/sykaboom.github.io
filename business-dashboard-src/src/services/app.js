@@ -1,3 +1,66 @@
+// business-dashboard-src/src/services/app.js
+import { firebase } from './firebase.js';
+import { setStatus } from '../ui/status.js';
+import { registry } from './registry.js';
+import { debounce } from '../utils/debounce.js';
+
+const debouncedSave = debounce(async (docId, html)=>{
+  try {
+    await firebase.save([`artifacts/${getAppId()}/public/data/businessDocs`, docId], html);
+    setStatus('connected', '저장됨');
+  } catch(e) {
+    console.error(e);
+    setStatus('error','저장 오류');
+  }
+}, 800);
+
+function getAppId(){
+  return typeof window.__app_id !== 'undefined' ? window.__app_id : 'default-app-id';
+}
+
+function bindCommonHandlers(docId, editorEl, feature){
+  editorEl.addEventListener('input', ()=>{
+    setStatus('connected', '저장 중...');
+    debouncedSave(docId, editorEl.innerHTML);
+  });
+
+  editorEl.addEventListener('click', (e)=>{
+    const btn = e.target.closest('button');
+    if (!btn) return;
+    const row = btn.closest('tr');
+    let shouldSave = true;
+
+    if (btn.matches('.add-plan-item') || btn.matches('.add-roadmap-item')){
+      let last = row, next = row.nextElementSibling;
+      while(next && !next.matches('.plan-category, .roadmap-category')){
+        last = next; next = next.nextElementSibling;
+      }
+      const t = feature.templates && feature.templates();
+      const html = btn.matches('.add-plan-item') ? t?.planItem : t?.roadmapItem;
+      if (html) last.insertAdjacentHTML('afterend', html);
+    } else if (btn.matches('.lock-btn')){
+      btn.classList.toggle('unlocked');
+      row.querySelector('.delete-btn')?.classList.toggle('unlocked');
+      if (btn.classList.contains('unlocked')) btn.setAttribute('data-unlocked','true');
+      else btn.removeAttribute('data-unlocked');
+    } else if (btn.matches('.delete-btn.unlocked')){
+      if (row.matches('.plan-category, .roadmap-category, .journal-entry-header')){
+        const toDelete=[row]; let next=row.nextElementSibling;
+        while(next && !next.matches('.plan-category, .roadmap-category, .journal-entry-header')){
+          toDelete.push(next); next=next.nextElementSibling;
+        }
+        toDelete.forEach(r=>r.remove());
+        if (row.matches('.plan-category, .roadmap-category') && feature.updateNumbering){
+          feature.updateNumbering(editorEl);
+        }
+      } else if (row.matches('.draggable-item')){
+        row.remove();
+      }
+    }
+    if (shouldSave) debouncedSave(docId, editorEl.innerHTML);
+  });
+}
+
 export async function startApp(){
   try {
     firebase.init();
@@ -28,15 +91,21 @@ export async function startApp(){
           } else {
             editor.innerHTML = initial;
             const tbody = editor.querySelector('tbody');
-            if (tbody){ tbody.innerHTML = defaults; debouncedSave(docId, editor.innerHTML); }
+            if (tbody){
+              tbody.innerHTML = defaults;
+              debouncedSave(docId, editor.innerHTML);
+            }
           }
           if (feature.initSortable) feature.initSortable(editor);
-        }, (e)=>{ console.error(e); setStatus('error','동기화 오류'); });
+        }, (e)=>{
+          console.error(e);
+          setStatus('error','동기화 오류');
+        });
 
         bindCommonHandlers(docId, editor, feature);
       });
 
-      // +버튼 리스너 연결
+      // +버튼 리스너
       const editorsMap = registry.items();
 
       const addJournal = document.getElementById('add-journal-entry');
@@ -88,15 +157,15 @@ export async function startApp(){
     }
   });
 
-  // === 로그인 시도 및 에러 표시 ===
+  // 로그인 시도 + UI 에러 표시
   try {
     await firebase.login();
   } catch (e) {
     console.error(e);
-    if (String(e?.message || e).includes('auth-auto-login-aborted')) {
-      setStatus('error', '자동 로그인 중단됨: 브라우저의 쿠키/추적 차단 설정을 확인하세요.');
+    if (String(e?.message || e).includes('auth-auto-login-aborted')){
+      setStatus('error','자동 로그인 중단됨: 브라우저의 쿠키/추적 차단 설정을 확인하세요.');
     } else {
-      setStatus('error', '인증 실패');
+      setStatus('error','인증 실패');
     }
   }
 }

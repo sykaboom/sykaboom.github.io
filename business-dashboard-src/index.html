@@ -22,27 +22,26 @@
     </header>
 
     <div class="border-b border-slate-200 mb-6">
-      <nav id="tabs" class="-mb-px flex space-x-6" aria-label="Tabs">
-        <!-- tabs rendered by JS -->
-      </nav>
+      <nav id="tabs" class="-mb-px flex space-x-6" aria-label="Tabs"></nav>
     </div>
 
-    <main id="tab-contents">
-      <!-- tab contents rendered by JS -->
-    </main>
+    <main id="tab-contents"></main>
   </div>
 
-  <script type="module" src="./src/main.js"></script>
+  <!-- Firebase 설정을 메인 모듈보다 '먼저' 주입 -->
   <script>
-  window.__firebase_config = JSON.stringify({
-    apiKey: "AIzaSyAUoLwDKpS77ZMJoLqmM1zme0i-JKzXFsw",
-    authDomain: "tutoring-room-business-planner.firebaseapp.com",
-    projectId: "tutoring-room-business-planner",
-    storageBucket: "tutoring-room-business-planner.appspot.com",
-    messagingSenderId: "839261471351",
-    appId: "1:839261471351:web:fcde084c88640552927c72"
-  });
-  window.__app_id = "tutoring-cafe-shared";
-</script>
+    window.__firebase_config = JSON.stringify({
+      apiKey: "AIzaSyAUoLwDKpS77ZMJoLqmM1zme0i-JKzXFsw",
+      authDomain: "tutoring-room-business-planner.firebaseapp.com",
+      projectId: "tutoring-room-business-planner",
+      storageBucket: "tutoring-room-business-planner.appspot.com",
+      messagingSenderId: "839261471351",
+      appId: "1:839261471351:web:fcde084c88640552927c72"
+    });
+    window.__app_id = "tutoring-cafe-shared";
+  </script>
+
+  <!-- 모듈 로딩은 마지막에 -->
+  <script type="module" src="./src/main.js"></script>
 </body>
 </html>
