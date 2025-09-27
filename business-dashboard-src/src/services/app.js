@@ -1,22 +1,29 @@
 /* =============================================================================
  * business-dashboard — src/services/app.js (ESM)
  *
- * 🔧 긴급 복구 + UI 개선패치 2
- * - ESM 모듈로 전환하고 startApp()을 내보냅니다(기존 main.js의 import 호환).
- * - 잠금(자물쇠)은 "삭제 방지" 전용: 내용은 항상 보이고 언제든 수정 가능.
- * - 카테고리 삭제 시 하위 묶음 동시 삭제 유지.
- * - "소항목/과업 추가"는 1회 클릭 = 정확히 1행만 생성. (중복 바인딩/버블 방지)
- * - 최신 템플릿(class: add-sub-item-btn, add-plan-item, add-roadmap-item)과 선택자 호환.
+ * 🔧 패치 요약
+ * - 전역 위임(click)으로 "일지항목추가 / 카테고리추가 / 단계추가" 버튼 신뢰성 확보
+ * - 버튼 id/class/data-action/텍스트(한국어) 기반 다각 매칭
+ * - 편집 테이블 외부 툴바 클릭도 해당 에디터로 라우팅하여 동작
+ * - 잠금(자물쇠)=삭제 방지 전용(내용은 항상 보이고 수정 가능)
+ * - 소항목/과업 추가 = 클릭 1회당 정확히 1행 (중복 방지)
+ * - 카테고리/일지 헤더 삭제 시 하위 묶음 동시 삭제 유지
  * =============================================================================*/
 import { registry } from './registry.js';
 import { firebase } from './firebase.js';
 import { setStatus } from '../ui/status.js';
 import { debounce } from '../utils/debounce.js';
 
-// 컨테이너 중복 바인딩 방지용 심볼
+// -----------------------------------------------------------------------------
+// 내부 상태
+// -----------------------------------------------------------------------------
+const EDITOR_MAP = new Map(); // editorRoot -> { key, feature, docPath }
 const BIND_KEY = Symbol('bindCommonHandlers');
+let TOP_LEVEL_BOUND = false;
 
-// ---- 유틸: 행 타입 판별 ---------------------------------------------------
+// -----------------------------------------------------------------------------
+// 유틸
+// -----------------------------------------------------------------------------
 function isCategoryRow(row) {
   if (!row) return false;
   const cls = row.className || '';
@@ -26,8 +33,47 @@ function isJournalHeaderRow(row) {
   if (!row) return false;
   return row.classList.contains('journal-entry-header');
 }
-
-// ---- UI 상태 동기화 -------------------------------------------------------
+function normalize(s) {
+  return (s || '').replace(/\s+/g, '').toLowerCase();
+}
+function getEditorRootByKey(key) {
+  return document.getElementById(`${key}-editor`);
+}
+function getEditorMetaByRoot(root) {
+  for (const [r, meta] of EDITOR_MAP) {
+    if (r === root) return meta;
+  }
+  return null;
+}
+function getNearestEditorRootFrom(el) {
+  // 우선: 등록된 editorRoot 중 자신을 포함하는 가장 안쪽 요소
+  let nearest = null;
+  for (const [root] of EDITOR_MAP) {
+    if (root.contains(el)) {
+      if (!nearest || nearest.contains(root)) nearest = root;
+    }
+  }
+  // 없으면 기본 편집기들 중 화면에 있는 것 우선
+  if (!nearest) {
+    const candidates = ['plan', 'roadmap', 'journal']
+      .map(getEditorRootByKey)
+      .filter(Boolean);
+    nearest = candidates.find((r) => r.offsetParent !== null) || candidates[0] || null;
+  }
+  return nearest;
+}
+function pickTemplate(feature, keys = []) {
+  const tpls = typeof feature?.templates === 'function' ? feature.templates() : {};
+  for (const k of keys) {
+    if (tpls && typeof tpls[k] === 'string' && tpls[k].trim()) return tpls[k];
+  }
+  // <template id="..."> 지원
+  for (const k of keys) {
+    const t = document.getElementById(`${k}-template`) || document.querySelector(`template[data-tpl="${k}"]`);
+    if (t && t.content) return t.innerHTML || t.content.firstElementChild?.outerHTML || '';
+  }
+  return '';
+}
 function syncRowUI(row) {
   if (!row) return;
   const locked = row.dataset.locked === '1';
@@ -38,7 +84,6 @@ function syncRowUI(row) {
   if (delBtn) {
     delBtn.classList.toggle('unlocked', !locked);
     delBtn.setAttribute('aria-disabled', locked ? 'true' : 'false');
-    // 삭제 금지: 시각/행동 일치
     if (locked) {
       delBtn.style.pointerEvents = 'none';
       delBtn.style.opacity = '0.35';
@@ -48,7 +93,7 @@ function syncRowUI(row) {
     }
   }
 
-  // 🔒 잠금은 "삭제 방지" 전용 → 내용은 항상 보이고 언제나 수정 가능
+  // 잠금=삭제 방지 전용 → 내용은 항상 보이고 언제나 수정 가능
   row.querySelectorAll('[contenteditable]').forEach((el) => {
     el.setAttribute('contenteditable', 'true');
     el.removeAttribute('aria-hidden');
@@ -59,15 +104,12 @@ function syncRowUI(row) {
 function syncAllRows(editorEl) {
   editorEl.querySelectorAll('tr').forEach(syncRowUI);
 }
-
-// ---- 섹션(카테고리/일지 헤더) 삭제: 하위 묶음 동시 제거 --------------------
 function deleteSectionRows(startRow) {
   if (!startRow) return;
   let cur = startRow.nextElementSibling;
   const isCat = isCategoryRow(startRow);
   const isHdr = isJournalHeaderRow(startRow);
 
-  // 기준 행 먼저 삭제
   startRow.remove();
 
   if (isCat) {
@@ -84,72 +126,47 @@ function deleteSectionRows(startRow) {
     }
   }
 }
-
-// ---- 섹션 내 "템플릿 행" 탐색 ---------------------------------------------
-function findTemplateRowForSection(categoryRow) {
-  // 카테고리/헤더 다음에 오는 첫 번째 일반 행을 템플릿로 사용
-  let cur = categoryRow?.nextElementSibling;
+function findTemplateRowForSection(sectionRow) {
+  let cur = sectionRow?.nextElementSibling;
   while (cur && !isCategoryRow(cur) && !isJournalHeaderRow(cur)) {
     if (cur.classList.contains('draggable-item') || cur.tagName === 'TR') return cur;
     cur = cur.nextElementSibling;
   }
-  // 없으면 카테고리 행 자체를 쓰되, 아래 cleanClonedRow에서 일반 항목으로 강등
-  return categoryRow || null;
+  return sectionRow || null;
 }
-
-// ---- 행 복제/삽입 (소항목·과업 추가용, 1회 클릭 = 1행 생성) ---------------
 function cleanClonedRow(clone, { type } = {}) {
-  // 삭제 가능 상태로 초기화
   clone.dataset.locked = '0';
-
-  // 카테고리/일지 헤더에서 "소항목/과업 추가" 시에는 일반 아이템으로 강등
   if (type === 'subitem' || type === 'task') {
     clone.classList.remove('journal-entry-header');
-    // className에서 category 토큰 제거
     clone.className = clone.className
-      .split(/\s+/)
-      .filter((cls) => cls && !/category/.test(cls))
-      .join(' ') || 'draggable-item';
+      .split(/\s+/).filter((cls) => cls && !/category/.test(cls)).join(' ') || 'draggable-item';
   }
-
-  // 내용 초기화
   clone.querySelectorAll('[contenteditable]').forEach((el) => {
     el.innerHTML = '';
     el.setAttribute('contenteditable', 'true');
   });
   clone.querySelectorAll('input, textarea, select').forEach((el) => {
-    if (el.tagName === 'SELECT') {
-      el.selectedIndex = 0;
-    } else if (el.type === 'checkbox' || el.type === 'radio') {
-      el.checked = false;
-    } else {
-      el.value = '';
-    }
-    // ID/NAME 중복 방지
+    if (el.tagName === 'SELECT') el.selectedIndex = 0;
+    else if (el.type === 'checkbox' || el.type === 'radio') el.checked = false;
+    else el.value = '';
     el.removeAttribute('id');
     el.removeAttribute('name');
   });
-
-  // 행 id 및 내부 data-id 정리
   if (clone.id) clone.id = '';
   clone.querySelectorAll('[data-id]').forEach((el) => el.removeAttribute('data-id'));
 
-  // 템플릿 행 내부에 "+ 소항목 추가 / + 과업 추가" 버튼이 있었다면 제거
+  // 템플릿 행 내부에 “추가” 버튼 유물 제거
   clone.querySelectorAll('.add-sub-item-btn, .add-plan-item, .add-roadmap-item, .add-subitem-btn, .add-task-btn').forEach(b => b.remove());
 
-  // 시각 상태 반영
   syncRowUI(clone);
   return clone;
 }
-
 function insertRowBelow(row, { type } = {}) {
   const newRow = row.cloneNode(true);
   cleanClonedRow(newRow, { type });
   row.parentNode.insertBefore(newRow, row.nextElementSibling);
   return newRow;
 }
-
-// ---- 번호 재정렬(선택사항) -------------------------------------------------
 function updateNumbering(editorEl) {
   let n = 1;
   editorEl.querySelectorAll('tr').forEach((tr) => {
@@ -158,21 +175,35 @@ function updateNumbering(editorEl) {
     if (numCell) numCell.textContent = String(n++);
   });
 }
+function saveEditor(editorRoot) {
+  const meta = getEditorMetaByRoot(editorRoot);
+  if (!meta) return;
+  const { docPath } = meta;
+  const holder = editorRoot.querySelector('tbody') || editorRoot;
+  const content = holder.innerHTML;
+  try {
+    firebase.save(docPath, content);
+    setStatus('online', '저장됨');
+  } catch (e) {
+    console.warn('[saveEditor] 실패:', e);
+    setStatus('degraded', '저장 오류');
+  }
+}
 
-// ---- 공통 핸들러 바인딩 (중복 바인딩 방지) ---------------------------------
+// -----------------------------------------------------------------------------
+// 에디터 내부 공통 핸들러 (행 잠금/삭제/소항목·과업 추가)
+// -----------------------------------------------------------------------------
 function bindCommonHandlers(docId, editorEl, feature) {
   if (!editorEl) return;
-  // 같은 컨테이너에 1회만 바인딩
   if (editorEl[BIND_KEY]) return;
   editorEl[BIND_KEY] = true;
 
-  // 초기 동기화
   syncAllRows(editorEl);
 
   editorEl.addEventListener(
     'click',
     (e) => {
-      const btn = e.target.closest('button, [role="button"], .control-btn, .lock-btn, .delete-btn');
+      const btn = e.target.closest('button, a, [role="button"], .control-btn, .lock-btn, .delete-btn');
       if (!btn || !editorEl.contains(btn)) return;
 
       const row = btn.closest('tr');
@@ -180,35 +211,31 @@ function bindCommonHandlers(docId, editorEl, feature) {
 
       let didMutate = false;
 
-      // 1) 잠금 토글 (삭제 방지 전용)
+      // 잠금 토글(삭제 방지 전용)
       if (btn.classList.contains('lock-btn')) {
         const nowLocked = row.dataset.locked === '1' ? false : true;
         row.dataset.locked = nowLocked ? '1' : '0';
-        // 내용 편집/표시 상태는 건드리지 않음
         syncRowUI(row);
         didMutate = true;
       }
 
-      // 2) 소항목/과업 추가 (1회 클릭 = 1행)
-      const isAddBtn =
-        btn.classList.contains('add-subitem-btn') ||         // 구버전
-        btn.classList.contains('add-sub-item-btn') ||        // 최신 템플릿
-        btn.classList.contains('add-task-btn')   ||          // 구버전
-        btn.classList.contains('add-plan-item')  ||          // 최신 템플릿(계획)
-        btn.classList.contains('add-roadmap-item') ||        // 최신 템플릿(로드맵)
-        btn.dataset.action === 'add-subitem' || btn.dataset.action === 'add-task' ||
+      // 소항목/과업 추가 (행 내부 버튼)
+      const isAddInner =
+        btn.classList.contains('add-subitem-btn') ||
+        btn.classList.contains('add-sub-item-btn') ||
+        btn.classList.contains('add-task-btn') ||
+        btn.classList.contains('add-plan-item') ||
+        btn.classList.contains('add-roadmap-item') ||
+        btn.dataset.action === 'add-subitem' ||
+        btn.dataset.action === 'add-task' ||
         /소항목\s*추가|과업\s*추가/.test(btn.textContent || '');
 
-      if (isAddBtn) {
+      if (isAddInner) {
         e.preventDefault();
         e.stopPropagation();
-
-        // 버튼 단위 busy 가드로 다중 생성 방지
         if (btn.dataset.busy === '1') return;
         btn.dataset.busy = '1';
-        setTimeout(() => {
-          btn.dataset.busy = '0';
-        }, 120); // 짧은 타임박스
+        setTimeout(() => { btn.dataset.busy = '0'; }, 120);
 
         const type =
           btn.classList.contains('add-roadmap-item') ||
@@ -217,66 +244,193 @@ function bindCommonHandlers(docId, editorEl, feature) {
             ? 'task'
             : 'subitem';
 
-        // 카테고리/헤더에서 눌렀다면 섹션 내 첫 일반 행을 템플릿로 사용
-        const templateRow = (isCategoryRow(row) || isJournalHeaderRow(row))
-          ? findTemplateRowForSection(row)
-          : row;
+        const templateRow =
+          (isCategoryRow(row) || isJournalHeaderRow(row))
+            ? findTemplateRowForSection(row)
+            : row;
 
-        const newRow = insertRowBelow(templateRow, { type });
+        insertRowBelow(templateRow, { type });
         didMutate = true;
-
-        // UX: 새 행의 첫 편집 가능한 셀에 포커스
-        const firstEditable = newRow.querySelector('[contenteditable], input, textarea, select');
-        if (firstEditable) {
-          if (
-            firstEditable.getAttribute('contenteditable') &&
-            firstEditable.getAttribute('contenteditable') !== 'false'
-          ) {
-            const range = document.createRange();
-            range.selectNodeContents(firstEditable);
-            range.collapse(false);
-            const sel = window.getSelection();
-            sel.removeAllRanges();
-            sel.addRange(range);
-            firstEditable.focus();
-          } else {
-            firstEditable.focus();
-          }
-        }
       }
 
-      // 3) 삭제 (섹션 헤더면 하위 묶음 포함)
+      // 삭제
       if (btn.classList.contains('delete-btn')) {
         e.preventDefault();
-        // 잠금 상태면 삭제 불가
         if (row.dataset.locked === '1') return;
-
-        if (isCategoryRow(row) || isJournalHeaderRow(row)) {
-          deleteSectionRows(row);
-        } else {
-          row.remove();
-        }
+        if (isCategoryRow(row) || isJournalHeaderRow(row)) deleteSectionRows(row);
+        else row.remove();
         didMutate = true;
       }
 
       if (didMutate) {
-        // 내장 번호 갱신
         updateNumbering(editorEl);
-        // 외부 훅
         try {
           if (typeof feature?.updateNumbering === 'function') feature.updateNumbering(editorEl);
           if (typeof feature?.onChange === 'function') feature.onChange();
           if (typeof feature?.autosave === 'function') feature.autosave();
-        } catch (_) {}
+          else saveEditor(editorEl);
+        } catch (_) {
+          saveEditor(editorEl);
+        }
       }
     },
-    true // 캡처 단계에서 한 번만 처리 → 버블링 중복 처리 예방
+    true // 캡처 단계: 버블 중복 처리 예방
   );
 }
 
-// ---- 앱 시작: 탭 렌더 후 각 에디터 초기화 + 동기화 -------------------------
+// -----------------------------------------------------------------------------
+// 전역(툴바) “추가” 버튼 핸들러: 일지항목/카테고리/단계
+// -----------------------------------------------------------------------------
+function isAddJournalButton(btn) {
+  const idc = (btn.id || '') + ' ' + (btn.className || '');
+  const data = (btn.dataset?.action || '') + ' ' + (btn.dataset?.add || '');
+  const txt = normalize(btn.textContent);
+  return (
+    /add[-_]journal/.test(idc + ' ' + data) ||
+    txt.includes('일지항목추가') ||
+    txt.includes('일지추가') ||
+    btn.getAttribute('aria-label')?.includes('일지') ||
+    btn.id === 'add-journal-entry'
+  );
+}
+function isAddCategoryButton(btn) {
+  const idc = (btn.id || '') + ' ' + (btn.className || '');
+  const data = (btn.dataset?.action || '') + ' ' + (btn.dataset?.add || '');
+  const txt = normalize(btn.textContent);
+  return (
+    /add[-_](plan[-_]?)?category/.test(idc + ' ' + data) ||
+    /add[-_]category/.test(idc + ' ' + data) ||
+    txt.includes('카테고리추가') ||
+    btn.id === 'add-plan-category' ||
+    btn.id === 'add-roadmap-category'
+  );
+}
+function isAddStepButton(btn) {
+  const idc = (btn.id || '') + ' ' + (btn.className || '');
+  const data = (btn.dataset?.action || '') + ' ' + (btn.dataset?.add || '');
+  const txt = normalize(btn.textContent);
+  return (
+    /add[-_]step|add[-_]stage|add[-_]roadmap[-_]item/.test(idc + ' ' + data) ||
+    txt.includes('단계추가') || txt.includes('스텝추가') || txt.includes('스테이지추가')
+  );
+}
+function resolveTargetKeyForCategory(btn) {
+  // 버튼 맥락/표기로 plan/roadmap 추정
+  const idc = (btn.id || '') + ' ' + (btn.className || '');
+  const data = (btn.dataset?.target || '') + ' ' + (btn.dataset?.for || '') + ' ' + (btn.dataset?.action || '');
+  const txt = (btn.textContent || '');
+  if (/roadmap/i.test(idc + ' ' + data + ' ' + txt)) return 'roadmap';
+  if (/plan/i.test(idc + ' ' + data + ' ' + txt)) return 'plan';
+
+  // 위치 기반(가까운 에디터)
+  const nearRoot = getNearestEditorRootFrom(btn);
+  if (nearRoot && nearRoot.id === 'roadmap-editor') return 'roadmap';
+  if (nearRoot && nearRoot.id === 'plan-editor') return 'plan';
+
+  // 화면 보이는 순서 우선
+  const roadmapVisible = getEditorRootByKey('roadmap');
+  if (roadmapVisible && roadmapVisible.offsetParent !== null) return 'roadmap';
+  const planVisible = getEditorRootByKey('plan');
+  if (planVisible && planVisible.offsetParent !== null) return 'plan';
+
+  // 마지막 기본값
+  return 'plan';
+}
+function appendHTMLToEditor(editorRoot, html) {
+  if (!editorRoot || !html) return false;
+  const holder = editorRoot.querySelector('tbody') || editorRoot;
+  holder.insertAdjacentHTML('beforeend', html);
+  updateNumbering(editorRoot);
+  syncAllRows(editorRoot);
+  saveEditor(editorRoot);
+  return true;
+}
+function cloneFallbackRow(editorRoot, opts = {}) {
+  // 섹션 내 첫 일반행 또는 마지막 일반행을 복제하여 초기화
+  const holder = editorRoot.querySelector('tbody') || editorRoot;
+  const rows = [...holder.querySelectorAll('tr')];
+  const candidate =
+    rows.find((r) => !isCategoryRow(r) && !isJournalHeaderRow(r)) ||
+    rows[rows.length - 1] ||
+    null;
+  if (!candidate) return '';
+  const row = candidate.cloneNode(true);
+  cleanClonedRow(row, opts);
+  return row.outerHTML;
+}
+function addJournalEntry(btn) {
+  const editorRoot = getEditorRootByKey('journal') || getNearestEditorRootFrom(btn);
+  if (!editorRoot) return;
+
+  const meta = getEditorMetaByRoot(editorRoot);
+  const html =
+    pickTemplate(meta?.feature, ['entry', 'journalEntry', 'journal']) ||
+    `<tr class="journal-entry-header"><td contenteditable="true">새 일지</td></tr>`; // 최소 안전 템플릿
+
+  appendHTMLToEditor(editorRoot, html);
+}
+function addCategory(btn) {
+  const key = resolveTargetKeyForCategory(btn); // plan or roadmap
+  const editorRoot = getEditorRootByKey(key) || getNearestEditorRootFrom(btn);
+  if (!editorRoot) return;
+
+  const meta = getEditorMetaByRoot(editorRoot);
+  const html =
+    (key === 'plan'
+      ? pickTemplate(meta?.feature, ['planCategory', 'category', 'section'])
+      : pickTemplate(meta?.feature, ['roadmapCategory', 'category', 'section'])
+    ) ||
+    `<tr class="${key}-category category"><td contenteditable="true">새 카테고리</td></tr>`;
+
+  appendHTMLToEditor(editorRoot, html);
+}
+function addStep(btn) {
+  const editorRoot = getEditorRootByKey('roadmap') || getNearestEditorRootFrom(btn);
+  if (!editorRoot) return;
+
+  const meta = getEditorMetaByRoot(editorRoot);
+  let html =
+    pickTemplate(meta?.feature, ['roadmapItem', 'step', 'task', 'item']) ||
+    cloneFallbackRow(editorRoot, { type: 'task' });
+
+  if (!html || !html.trim()) {
+    html = `<tr class="draggable-item"><td contenteditable="true">새 단계</td></tr>`;
+  }
+  appendHTMLToEditor(editorRoot, html);
+}
+function bindTopLevelAddHandlersOnce() {
+  if (TOP_LEVEL_BOUND) return;
+  TOP_LEVEL_BOUND = true;
+
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('button, a, [role="button"], .btn, .toolbar-btn, .control-btn');
+    if (!btn) return;
+
+    // 일지항목추가
+    if (isAddJournalButton(btn)) {
+      e.preventDefault();
+      addJournalEntry(btn);
+      return;
+    }
+    // 카테고리추가 (plan/roadmap 자동 판별)
+    if (isAddCategoryButton(btn)) {
+      e.preventDefault();
+      addCategory(btn);
+      return;
+    }
+    // 단계추가 (roadmap)
+    if (isAddStepButton(btn)) {
+      e.preventDefault();
+      addStep(btn);
+      return;
+    }
+  }, true); // 캡처 단계
+}
+
+// -----------------------------------------------------------------------------
+// 앱 시작
+// -----------------------------------------------------------------------------
 export async function startApp() {
-  // Firebase 준비 및 로그인 상태 표시
   try {
     await firebase.init();
     await firebase.bootstrap();
@@ -309,19 +463,18 @@ export async function startApp() {
   const appId = window.__app_id || 'default';
   const features = registry.items();
 
+  // 각 에디터 초기화/구독
   Object.entries(features).forEach(([key, feature]) => {
     const editorId = `${key}-editor`;
     const editorRoot = document.getElementById(editorId);
     if (!editorRoot) return;
 
-    // 테이블/스켈레톤 생성
     if (typeof feature.initialShell === 'function') {
       editorRoot.innerHTML = feature.initialShell();
     }
 
-    // 구독 → 서버(파이어스토어) ↔ 로컬 동기화
     const docPath = ['apps', appId, 'docs', key];
-    let hydrated = false; // 최초 수신 여부
+    EDITOR_MAP.set(editorRoot, { key, feature, docPath });
 
     firebase.subscribe(
       docPath,
@@ -329,60 +482,20 @@ export async function startApp() {
         try {
           const data = snap?.data?.();
           const html = data?.content;
-          const tbody = editorRoot.querySelector('tbody') || editorRoot;
+          const holder = editorRoot.querySelector('tbody') || editorRoot;
 
-          if (html && typeof html === 'string') {
-            tbody.innerHTML = html;
-            hydrated = true;
-          } else if (!hydrated && typeof feature.defaultRows === 'function') {
-            // 서버에 내용이 없을 때 최초 1회 기본 행 주입
-            tbody.insertAdjacentHTML('beforeend', feature.defaultRows());
-            hydrated = true;
-          }
+          if (html && typeof html === 'string') holder.innerHTML = html;
+          else if (typeof feature.defaultRows === 'function') holder.insertAdjacentHTML('beforeend', feature.defaultRows());
 
-          // 드래그 정렬 활성화
-          if (typeof feature.initSortable === 'function') {
-            feature.initSortable(editorRoot);
-          }
+          if (typeof feature.initSortable === 'function') feature.initSortable(editorRoot);
 
-          // 공통 핸들러 바인딩 (1회)
           bindCommonHandlers(key, editorRoot, {
             updateNumbering: feature.updateNumbering,
-            // 자동 저장(디바운스)
             autosave: debounce(() => {
-              const content = (editorRoot.querySelector('tbody') || editorRoot).innerHTML;
-              firebase.save(docPath, content);
-            }, 800),
+              saveEditor(editorRoot);
+            }, 600),
           });
 
-          // 추가 버튼(카테고리/일지 항목) 바인딩
-          const addBtnIdMap = {
-            plan: 'add-plan-category',
-            roadmap: 'add-roadmap-category',
-            journal: 'add-journal-entry',
-          };
-          const addBtn = document.getElementById(addBtnIdMap[key]);
-          if (addBtn && !addBtn.dataset.bound) {
-            addBtn.dataset.bound = '1';
-            addBtn.addEventListener('click', (e) => {
-              e.preventDefault();
-              const tpls = typeof feature.templates === 'function' ? feature.templates() : {};
-              let html = '';
-              if (key === 'plan') html = tpls.planCategory || '';
-              else if (key === 'roadmap') html = tpls.roadmapCategory || '';
-              else if (key === 'journal') html = tpls.entry || '';
-
-              const tbody2 = editorRoot.querySelector('tbody') || editorRoot;
-              if (html) {
-                tbody2.insertAdjacentHTML('beforeend', html);
-                try { if (typeof feature.updateNumbering === 'function') feature.updateNumbering(editorRoot); } catch(_) {}
-                const content = tbody2.innerHTML;
-                firebase.save(docPath, content);
-              }
-            });
-          }
-
-          // 시각 상태 동기화
           syncAllRows(editorRoot);
           setStatus('online', '온라인 동기화됨');
         } catch (err) {
@@ -392,11 +505,10 @@ export async function startApp() {
       },
       (err) => {
         console.error('[subscribe.onError]', err);
-        // 서버 오류 시에도 로컬 기본 행을 보여줌
         try {
-          const tbody = editorRoot.querySelector('tbody') || editorRoot;
-          if (tbody && typeof feature.defaultRows === 'function') {
-            tbody.innerHTML = feature.defaultRows();
+          const holder = editorRoot.querySelector('tbody') || editorRoot;
+          if (holder && typeof feature.defaultRows === 'function') {
+            holder.innerHTML = feature.defaultRows();
           }
           bindCommonHandlers(key, editorRoot, { updateNumbering: feature.updateNumbering });
         } catch (_) {}
@@ -404,7 +516,17 @@ export async function startApp() {
       }
     );
   });
+
+  // 상단/사이드 툴바 "추가" 버튼 전역 바인딩 (한 번만)
+  bindTopLevelAddHandlersOnce();
 }
 
-// ---- 유틸 공개(디버그용) ---------------------------------------------------
-export { bindCommonHandlers, syncRowUI, syncAllRows, deleteSectionRows, insertRowBelow, updateNumbering };
+// (선택) 디버깅 편의를 위해 유틸 일부 export
+export {
+  bindCommonHandlers,
+  syncRowUI,
+  syncAllRows,
+  deleteSectionRows,
+  insertRowBelow,
+  updateNumbering
+};
