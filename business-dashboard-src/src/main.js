@@ -14,3 +14,7 @@ registry.register('plan', plan);
 // Render shell and boot
 renderTabs();
 startApp();
+
+// In-app browser guard (moved from index.html)
+import { bootInAppGuard } from './utils/inapp/guard.js';
+bootInAppGuard({ loginPath: '/login', homeUrl: location.href });
