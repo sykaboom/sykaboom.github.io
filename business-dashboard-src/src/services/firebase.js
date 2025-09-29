@@ -1,5 +1,7 @@
 // business-dashboard-src/src/services/firebase.js
-// Patched for Step 2: setStatus hooks on save
+// Step 3: 오프라인 임시 저장 큐 + 온라인 복귀 시 자동 플러시
+// - save()는 오프라인이면 큐에 적재 후 성공 상태를 UI에 안내하지 않습니다.
+// - 온라인 복귀(또는 수동 호출) 시 flushQueue()가 순차 동기화합니다.
 
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
 import {
@@ -21,6 +23,20 @@ import { setStatus } from './app.js';
 export const firebase = (()=>{
   let app, db, auth;
   let redirectProcessed = false;
+
+  // ---- Offline Queue (localStorage) ----
+  const QKEY = 'bd_save_queue_v1';
+  function isOnline(){ return typeof navigator !== 'undefined' ? navigator.onLine : true; }
+  function loadQueue(){
+    try { return JSON.parse(localStorage.getItem(QKEY) || '[]'); }
+    catch { return []; }
+  }
+  function persistQueue(q){ try { localStorage.setItem(QKEY, JSON.stringify(q)); } catch {} }
+  function enqueue(op){
+    const q = loadQueue();
+    q.push(op);
+    persistQueue(q);
+  }
 
   function ensureConfig(){
     const cfg = typeof window.__firebase_config !== 'undefined'
@@ -92,19 +108,48 @@ export const firebase = (()=>{
   }
 
   async function save(docPath, content){
-    try {
-      setStatus('connecting','저장 중…');
-      await setDoc(
-        doc(db, ...docPath),
-        { content, lastUpdated: serverTimestamp() },
-        { merge: true }
-      );
-      setStatus('connected','저장됨');
-    } catch (e) {
-      console.error('[save] 실패:', e);
-      setStatus('error','저장 오류');
+    // 온라인이면 즉시 저장
+    if (isOnline()) {
+      try {
+        setStatus('connecting','저장 중…');
+        await setDoc(
+          doc(db, ...docPath),
+          { content, lastUpdated: serverTimestamp() },
+          { merge: true }
+        );
+        setStatus('connected','저장됨');
+        return;
+      } catch (e) {
+        console.error('[save] 온라인 저장 실패 → 큐 적재:', e);
+        // 저장 실패도 큐로 전환
+      }
     }
+    // 오프라인이거나 온라인 저장 실패 시: 큐 적재
+    enqueue({ docPath, content, ts: Date.now() });
+    setStatus('connecting','오프라인 — 임시 저장 중');
   }
 
-  return { init, bootstrap, login, logout, onAuth, subscribe, save };
+  async function flushQueue(){
+    const q = loadQueue();
+    if (!q.length) return 0;
+    let ok = 0, fail = 0;
+    const rest = [];
+    for (const op of q){
+      try {
+        await setDoc(
+          doc(db, ...op.docPath),
+          { content: op.content, lastUpdated: serverTimestamp() },
+          { merge: true }
+        );
+        ok++;
+      } catch (e) {
+        console.error('[flushQueue] 실패, 보존:', e);
+        rest.push(op); fail++;
+      }
+    }
+    persistQueue(rest);
+    return ok;
+  }
+
+  return { init, bootstrap, login, logout, onAuth, subscribe, save, flushQueue, isOnline };
 })();
