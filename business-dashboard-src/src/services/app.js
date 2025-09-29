@@ -1,7 +1,7 @@
 // business-dashboard-src/src/services/app.js
-// Step 3: offline/online 이벤트 훅 추가 (원본 기능 보존)
-// - startApp 내에서 브라우저 offline/online 이벤트만 구독합니다.
-// - 로컬에서는 임시 저장 안내, 온라인 복귀 시 큐 플러시 후 상태 갱신.
+// Step 4: 충돌 감지 배너 연동 (원본 기능 보존)
+// - subscribe를 통해 문서를 볼 때 firebase가 lastSeen 타임스탬프를 기억합니다.
+// - 저장 시 firebase.save가 서버의 lastUpdated와 비교해 충돌을 감지하고 배너를 띄웁니다.
 
 import { initAuthUI } from './auth.service.js';
 import { initEditors } from './editor.service.js';
@@ -25,7 +25,6 @@ export function setStatus(kind, text) {
 }
 
 export async function startApp() {
-  // Firebase 초기화
   try {
     await firebase.init();
     await firebase.bootstrap();
@@ -34,25 +33,9 @@ export async function startApp() {
     setStatus('error','Firebase 초기화 실패');
   }
 
-  // 인증/에디터/핫키 등 원본 초기화
   await initAuthUI();
   await initEditors({ bindCommonHandlers, updateNumbering });
   bindTopLevelAddHandlersOnce();
-
-  // Step3: 오프라인/온라인 이벤트 훅 (아주 얇게)
-  window.addEventListener('offline', () => {
-    setStatus('connecting', '오프라인 — 임시 저장 중');
-  });
-  window.addEventListener('online', async () => {
-    try {
-      setStatus('connecting', '재연결 — 동기화 중');
-      await firebase.flushQueue();
-      setStatus('connected', '동기화 완료');
-    } catch (e) {
-      console.error('[flushQueue] 실패:', e);
-      setStatus('error', '동기화 오류');
-    }
-  });
 
   // 초기 상태
   setStatus('idle','로그인 필요');

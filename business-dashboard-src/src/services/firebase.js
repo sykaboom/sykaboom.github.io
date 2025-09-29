@@ -1,7 +1,8 @@
 // business-dashboard-src/src/services/firebase.js
-// Step 3: 오프라인 임시 저장 큐 + 온라인 복귀 시 자동 플러시
-// - save()는 오프라인이면 큐에 적재 후 성공 상태를 UI에 안내하지 않습니다.
-// - 온라인 복귀(또는 수동 호출) 시 flushQueue()가 순차 동기화합니다.
+// Step 4: 충돌 감지(Conflict Detection) 추가
+// - subscribe() 시 마지막으로 본 lastUpdated를 내부 캐시에 저장
+// - save() 직전에 서버의 lastUpdated와 비교하여 최신이면 충돌 배너 표시
+// - 배너에서 '내 변경 덮어쓰기'를 누르면 1회 허용 후 다시 저장 시도
 
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
 import {
@@ -16,27 +17,20 @@ import {
   signOut,
 } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
 import {
-  getFirestore, doc, onSnapshot, setDoc, serverTimestamp
+  getFirestore, doc, onSnapshot, setDoc, serverTimestamp, getDoc
 } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js';
 import { setStatus } from './app.js';
+import { showConflictBanner } from '../ui/conflict.js';
 
 export const firebase = (()=>{
   let app, db, auth;
   let redirectProcessed = false;
 
-  // ---- Offline Queue (localStorage) ----
-  const QKEY = 'bd_save_queue_v1';
-  function isOnline(){ return typeof navigator !== 'undefined' ? navigator.onLine : true; }
-  function loadQueue(){
-    try { return JSON.parse(localStorage.getItem(QKEY) || '[]'); }
-    catch { return []; }
-  }
-  function persistQueue(q){ try { localStorage.setItem(QKEY, JSON.stringify(q)); } catch {} }
-  function enqueue(op){
-    const q = loadQueue();
-    q.push(op);
-    persistQueue(q);
-  }
+  // subscribe / save 충돌 판정용 캐시
+  const lastSeenTs = new Map();          // key(docPathString) -> millis
+  const allowOverwriteOnce = new Map();  // key -> boolean
+
+  function keyOf(path){ return Array.isArray(path) ? path.join('/') : String(path); }
 
   function ensureConfig(){
     const cfg = typeof window.__firebase_config !== 'undefined'
@@ -104,52 +98,60 @@ export const firebase = (()=>{
   }
 
   function subscribe(docPath, onOk, onErr){
-    return onSnapshot(doc(db, ...docPath), onOk, onErr);
+    const ref = doc(db, ...(Array.isArray(docPath) ? docPath : [docPath]));
+    return onSnapshot(ref, (snap)=>{
+      try {
+        const data = snap.data && snap.data();
+        const ts = data?.lastUpdated?.toMillis ? data.lastUpdated.toMillis() : Date.now();
+        lastSeenTs.set(keyOf(docPath), ts);
+      } catch(_) {}
+      onOk && onOk(snap);
+    }, onErr);
   }
 
   async function save(docPath, content){
-    // 온라인이면 즉시 저장
-    if (isOnline()) {
-      try {
-        setStatus('connecting','저장 중…');
-        await setDoc(
-          doc(db, ...docPath),
-          { content, lastUpdated: serverTimestamp() },
-          { merge: true }
-        );
-        setStatus('connected','저장됨');
+    const k = keyOf(docPath);
+    // 저장 직전 서버 최신 버전 확인
+    try {
+      const ref = doc(db, ...(Array.isArray(docPath) ? docPath : [docPath]));
+      const curSnap = await getDoc(ref);
+      const serverTs = curSnap.exists() ? (curSnap.data()?.lastUpdated?.toMillis?.() || 0) : 0;
+      const localTs  = lastSeenTs.get(k) || 0;
+
+      if (serverTs > localTs && !allowOverwriteOnce.get(k)){
+        // 충돌: 배너 표시 후 종료 (사용자 선택 기다림)
+        showConflictBanner({
+          onOverwrite: async ()=>{
+            allowOverwriteOnce.set(k, true);
+            await save(docPath, content);
+          },
+          onRefresh: ()=>{ location.reload(); }
+        });
         return;
-      } catch (e) {
-        console.error('[save] 온라인 저장 실패 → 큐 적재:', e);
-        // 저장 실패도 큐로 전환
       }
+    } catch (e) {
+      // 메타를 못 읽어도 저장은 시도 (네트워크 일시 오류 등)
+      console.warn('[conflict-check] 경고:', e);
     }
-    // 오프라인이거나 온라인 저장 실패 시: 큐 적재
-    enqueue({ docPath, content, ts: Date.now() });
-    setStatus('connecting','오프라인 — 임시 저장 중');
+
+    // 실제 저장
+    try {
+      setStatus('connecting','저장 중…');
+      const ref = doc(db, ...(Array.isArray(docPath) ? docPath : [docPath]));
+      await setDoc(
+        ref,
+        { content, lastUpdated: serverTimestamp() },
+        { merge: true }
+      );
+      allowOverwriteOnce.delete(k);
+      setStatus('connected','저장됨');
+      // 저장 성공 후 마지막 본 시각 갱신(낙관적 업데이트)
+      lastSeenTs.set(k, Date.now());
+    } catch (e) {
+      console.error('[save] 실패:', e);
+      setStatus('error','저장 오류');
+    }
   }
 
-  async function flushQueue(){
-    const q = loadQueue();
-    if (!q.length) return 0;
-    let ok = 0, fail = 0;
-    const rest = [];
-    for (const op of q){
-      try {
-        await setDoc(
-          doc(db, ...op.docPath),
-          { content: op.content, lastUpdated: serverTimestamp() },
-          { merge: true }
-        );
-        ok++;
-      } catch (e) {
-        console.error('[flushQueue] 실패, 보존:', e);
-        rest.push(op); fail++;
-      }
-    }
-    persistQueue(rest);
-    return ok;
-  }
-
-  return { init, bootstrap, login, logout, onAuth, subscribe, save, flushQueue, isOnline };
+  return { init, bootstrap, login, logout, onAuth, subscribe, save };
 })();
