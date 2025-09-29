@@ -1,8 +1,6 @@
-// src/services/firebase.js (교체본)
-// - 자동 로그인 제거 (초기 진입 시 팝업/리디렉션을 시작하지 않음)
-// - 로그인 버튼 클릭 시에만 인증 흐름 시작
-// - 팝업 차단 시 signInWithRedirect로 자동 폴백
-// - 로그인 유지: browserLocalPersistence
+// business-dashboard-src/src/services/firebase.js
+// Patched for Step 2: setStatus hooks on save
+
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
 import {
   getAuth,
@@ -18,6 +16,7 @@ import {
 import {
   getFirestore, doc, onSnapshot, setDoc, serverTimestamp
 } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js';
+import { setStatus } from './app.js';
 
 export const firebase = (()=>{
   let app, db, auth;
@@ -41,43 +40,36 @@ export const firebase = (()=>{
     app  = initializeApp(config);
     db   = getFirestore(app);
     auth = getAuth(app);
-    // 로그인 유지
     try {
       await setPersistence(auth, browserLocalPersistence);
     } catch (e) {
-      console.warn('[AUTH] setPersistence 실패 – 브라우저 제한일 수 있음:', e);
+      console.warn('[AUTH] setPersistence 실패:', e);
     }
     return { app, db, auth };
   }
 
-  // GitHub Pages 등에서 리디렉션 복귀 시 결과를 1회만 처리
   async function processRedirectResultOnce(){
     if (redirectProcessed) return;
     redirectProcessed = true;
     try {
       await getRedirectResult(auth);
     } catch(e) {
-      // 일부 브라우저 환경에서 에러가 날 수 있으나, 사용자 세션은 onAuthStateChanged로 정상 전달된다.
       console.warn('getRedirectResult 경고:', e);
     }
   }
 
-  // 페이지 최초 진입 시 호출: 초기화 + 리디렉션 결과만 처리(자동 로그인 X)
   async function bootstrap(){
     await init();
     await processRedirectResultOnce();
   }
 
-  // 사용자가 클릭했을 때만 실제 로그인 흐름을 시작
   async function login(){
     await init();
     const provider = new GoogleAuthProvider();
     provider.setCustomParameters({ prompt: 'select_account' });
-
     try {
       await signInWithPopup(auth, provider);
     } catch(e) {
-      // 팝업 차단/미지원 → 리디렉션 폴백
       if (String(e?.code || e).includes('popup') || String(e?.message || e).includes('popup')) {
         await signInWithRedirect(auth, provider);
       } else {
@@ -100,11 +92,18 @@ export const firebase = (()=>{
   }
 
   async function save(docPath, content){
-    await setDoc(
-      doc(db, ...docPath),
-      { content, lastUpdated: serverTimestamp() },
-      { merge: true }
-    );
+    try {
+      setStatus('connecting','저장 중…');
+      await setDoc(
+        doc(db, ...docPath),
+        { content, lastUpdated: serverTimestamp() },
+        { merge: true }
+      );
+      setStatus('connected','저장됨');
+    } catch (e) {
+      console.error('[save] 실패:', e);
+      setStatus('error','저장 오류');
+    }
   }
 
   return { init, bootstrap, login, logout, onAuth, subscribe, save };
