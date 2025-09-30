@@ -1,10 +1,9 @@
 // src/features/journal-assignees-chips.js
-// Multi-select chips for Journal '담당자' cells.
-// - Default members can be edited here (TEAM).
-// - Multi-select up to MAX (default 3).
-// - Click to toggle; disabled style when limit reached.
-// - Stores comma-separated values in td[data-value].
-// - Triggers existing autosave by dispatching 'input' on the editor.
+// Multi-select chips for Journal '담당자' cells (only attaches to td.assignees-cell).
+// - TEAM: edit names here
+// - MAX: maximum selectable
+// - Stores comma-separated values in td[data-value]
+// - Triggers autosave via 'input' event on the editor
 
 const TEAM = ['방성윤','이용화','최우혁']; // 필요 시 수정
 const MAX = 3;
@@ -15,8 +14,7 @@ function getJournalRoot(){
 }
 
 function isAssigneesCell(td){
-  if (!td || td.tagName !== 'TD') return false;
-  return td.classList.contains('assignees-cell') || /assignee|담당/.test((td.className||'') + ' ' + (td.getAttribute('data-role')||''));
+  return td && td.tagName === 'TD' && td.classList.contains('assignees-cell');
 }
 
 function parseList(s){
@@ -43,7 +41,6 @@ function buildGroup(selected){
     group.appendChild(btn);
   });
 
-  // helper label (selected count)
   const hint = document.createElement('div');
   hint.className = 'assignees-hint';
   hint.style.fontSize = '11px';
@@ -62,7 +59,6 @@ function applySelection(group, values){
     b.classList.toggle('selected', on);
     b.setAttribute('aria-pressed', on ? 'true' : 'false');
     if (!on && set.size >= MAX){
-      // Prevent adding more when max reached
       b.classList.add('disabled');
       b.style.opacity = '0.5';
       b.style.pointerEvents = 'none';
@@ -87,8 +83,9 @@ function mountChips(td){
 
   function commit(list){
     const unique = Array.from(new Set(list));
-    td.setAttribute('data-value', serializeList(unique));
-    td.dataset.raw = serializeList(unique);
+    const ser = serializeList(unique);
+    td.setAttribute('data-value', ser);
+    td.dataset.raw = ser;
     const evt = new Event('input', { bubbles: true });
     if (editor) editor.dispatchEvent(evt);
   }
@@ -102,17 +99,13 @@ function mountChips(td){
     if (has){
       list = list.filter(x => x!==name);
     } else {
-      if (list.length >= MAX){
-        // ignore if max; could flash hint later
-        return;
-      }
+      if (list.length >= MAX) return;
       list.push(name);
     }
     applySelection(group, list);
     commit(list);
   });
 
-  // Keyboard support: Space/Enter toggles focused chip
   group.addEventListener('keydown', (e)=>{
     const chips = Array.from(group.querySelectorAll('.status-chip'));
     let i = chips.indexOf(document.activeElement);
@@ -123,9 +116,11 @@ function mountChips(td){
       i = (i - 1 + chips.length) % chips.length;
       chips[i].focus(); e.preventDefault();
     } else if (e.key === ' ' || e.key === 'Enter'){
-      document.activeElement.click(); e.preventDefault();
+      if (document.activeElement && document.activeElement.classList.contains('status-chip')) {
+        document.activeElement.click();
+        e.preventDefault();
+      }
     } else if (e.key === 'Escape'){
-      // clear all
       applySelection(group, []); commit([]); e.preventDefault();
     }
   });
@@ -136,7 +131,7 @@ function mountChips(td){
 function enhance(){
   const root = getJournalRoot();
   if (!root) return;
-  const cells = root.querySelectorAll('td, [role="cell"]');
+  const cells = root.querySelectorAll('td.assignees-cell');
   cells.forEach(td => { if (isAssigneesCell(td)) mountChips(td); });
 }
 

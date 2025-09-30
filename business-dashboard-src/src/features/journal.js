@@ -1,10 +1,6 @@
 // src/features/journal.js
-// Override: Journal table simplified to single entry columns with chip-based fields.
+// Patched: Simplified Journal table to single structure with one 내용, one 진행 상태, one 담당자
 // Columns: 구분 | 내용 | 진행 상태 | 담당자 | 관리
-// - 내용: contenteditable (free text)
-// - 진행 상태: chip UI mounts on .status-cell (single select)
-// - 담당자: chip UI mounts on .assignees-cell (multi-select; separate script will handle)
-// This keeps the module interface (title, shellHTML, initialShell, defaultRows, templates, initSortable).
 
 import { manageControls, addButtons } from './_common.js';
 
@@ -17,12 +13,10 @@ function today(){
   return `${y}-${m}-${d} (${w})`;
 }
 
-// Shell: editor root + add-row button
 export function shellHTML(){
   return `<div id="journal-editor" class="w-full min-h-[60vh] overflow-auto focus-within:outline-none"></div>${addButtons('add-journal-entry','일지 항목 추가')}`;
 }
 
-// Table skeleton: single set of columns
 export function initialShell(){
   return `
   <table class="w-full journal-table">

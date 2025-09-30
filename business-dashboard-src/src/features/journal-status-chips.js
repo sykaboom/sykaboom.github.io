@@ -1,11 +1,6 @@
 // src/features/journal-status-chips.js
 // Journal status -> chip UI (3 on top, 2 below), centered.
-// Features:
-// - Five fixed states: Planned, In Progress, Review, Blocked, Done
-// - Click to select; click selected again to clear (deselect)
-// - Arrow keys to move; Esc to clear
-// - Unselected chips are lighter; selected is primary
-// - Triggers existing autosave by dispatching 'input' on the editor
+// Simplified: only attaches to td.status-cell, not placeholder text.
 
 const STATUS = ['Planned','In Progress','Review','Blocked','Done'];
 
@@ -15,12 +10,7 @@ function getJournalRoot(){
 }
 
 function isStatusCell(td){
-  if (!td || td.tagName !== 'TD') return false;
-  const cls = (td.className || '').toLowerCase();
-  const role = (td.getAttribute('data-role') || '').toLowerCase();
-  const hint = (td.getAttribute('placeholder') || '').toLowerCase();
-  return /status|progress/.test(cls + ' ' + role)
-      || /\bplanned\b|\bin progress\b|\breview\b|\bblocked\b|\bdone\b/.test(hint);
+  return td && td.tagName === 'TD' && td.classList.contains('status-cell');
 }
 
 function normalize(val){
@@ -41,7 +31,6 @@ function buildGroup(cur){
   group.setAttribute('role','group');
   group.setAttribute('aria-label','진행 상태');
 
-  // rows: [0..2], [3..4]
   const rowTop = document.createElement('div');
   rowTop.className = 'status-chip-row top';
   const rowBottom = document.createElement('div');
@@ -97,12 +86,11 @@ function mountChips(td){
     const btn = e.target.closest('.status-chip');
     if (!btn) return;
     const current = td.getAttribute('data-value') || '';
-    const next = (btn.dataset.value === current) ? '' : btn.dataset.value; // toggle to clear
+    const next = (btn.dataset.value === current) ? '' : btn.dataset.value;
     applySelection(group, next);
     commit(next);
   });
 
-  // Keyboard support
   group.addEventListener('keydown', (e)=>{
     const chips = Array.from(group.querySelectorAll('.status-chip'));
     const curVal = td.getAttribute('data-value') || '';
@@ -122,7 +110,7 @@ function mountChips(td){
 function enhance(){
   const root = getJournalRoot();
   if (!root) return;
-  const cells = root.querySelectorAll('td, [role="cell"]');
+  const cells = root.querySelectorAll('td.status-cell');
   cells.forEach(td => { if (isStatusCell(td)) mountChips(td); });
 }
 
