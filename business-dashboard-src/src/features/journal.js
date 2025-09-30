@@ -1,6 +1,6 @@
 // src/features/journal.js
-// Patched: Simplified Journal table to single structure with one 내용, one 진행 상태, one 담당자
-// Columns: 구분 | 내용 | 진행 상태 | 담당자 | 관리
+// Card UI for Journal: one entry = one card (no table).
+// Structure: Header(date + manage), Body(left: content/notes, right: status chips + assignees chips).
 
 import { manageControls, addButtons } from './_common.js';
 
@@ -18,19 +18,7 @@ export function shellHTML(){
 }
 
 export function initialShell(){
-  return `
-  <table class="w-full journal-table">
-    <thead class="text-slate-700">
-      <tr>
-        <th class="p-3 font-semibold text-left w-1/5 text-lg">구분</th>
-        <th class="p-3 font-semibold text-left text-lg">내용</th>
-        <th class="p-3 font-semibold text-center text-lg w-56">진행 상태</th>
-        <th class="p-3 font-semibold text-center text-lg w-56">담당자</th>
-        <th class="p-3 font-semibold text-center w-24">관리</th>
-      </tr>
-    </thead>
-    <tbody class="bg-white"></tbody>
-  </table>`;
+  return `<div class="space-y-6"></div>`;
 }
 
 export function defaultRows(){
@@ -39,30 +27,38 @@ export function defaultRows(){
 
 function entryTemplate(){
   return `
-  <tr class="journal-entry-header">
-    <td class="p-3 font-semibold text-slate-600 text-lg" colspan="4" contenteditable="true">${today()}</td>
-    <td class="p-3">${manageControls}</td>
-  </tr>
-
-  <tr class="journal-entry-body">
-    <td class="p-3 font-medium">주요 업무 내용</td>
-    <td class="p-3" contenteditable="true" placeholder="[진행한 업무 내용을 입력하세요]"></td>
-    <td class="p-3 status-cell centered"></td>
-    <td class="p-3 assignees-cell centered"></td>
-    <td class="p-3"></td>
-  </tr>
-
-  <tr class="journal-entry-notes">
-    <td class="p-3 font-medium">비고 (공유/요청)</td>
-    <td class="p-3" contenteditable="true" placeholder="[@이름: 메모 / 질문은 마감일 명시]"></td>
-    <td class="p-3"></td>
-    <td class="p-3"></td>
-    <td class="p-3"></td>
-  </tr>`;
+  <div class="journal-card bg-white rounded-lg shadow-md mb-6 p-4 md:p-6" data-entry="journal">
+    <div class="flex items-start justify-between mb-4">
+      <div class="font-bold text-lg text-slate-900" contenteditable="true">${today()}</div>
+      <div class="flex items-center gap-2">${manageControls}</div>
+    </div>
+    <div class="grid md:grid-cols-2 gap-4">
+      <div class="space-y-4">
+        <div>
+          <div class="text-xs font-semibold text-slate-500 mb-1">주요 업무 내용</div>
+          <div class="p-3 bg-slate-50 rounded min-h-[72px]" contenteditable="true" placeholder="[진행한 업무 내용을 입력하세요]"></div>
+        </div>
+        <div>
+          <div class="text-xs font-semibold text-slate-500 mb-1">비고 (공유/요청)</div>
+          <div class="p-3 bg-slate-50 rounded min-h-[56px]" contenteditable="true" placeholder="[@이름: 메모 / 질문은 마감일 명시]"></div>
+        </div>
+      </div>
+      <div class="space-y-6">
+        <div>
+          <div class="text-xs font-semibold text-slate-500 mb-2">진행 상태</div>
+          <div class="status-cell centered"></div>
+        </div>
+        <div>
+          <div class="text-xs font-semibold text-slate-500 mb-2">담당자</div>
+          <div class="assignees-cell centered"></div>
+        </div>
+      </div>
+    </div>
+  </div>`;
 }
 
 export function templates(){
   return { entry: entryTemplate() };
 }
 
-export function initSortable(){ /* Journal rows are not sortable for now */ }
+export function initSortable(){ /* cards are not sortable for now */ }
