@@ -1,8 +1,11 @@
 // src/features/journal-status-chips.js
-// Journal 'status/progress' cells -> button-segment (chip) UI
+// Journal status -> chip UI (3 on top, 2 below), centered.
+// Features:
 // - Five fixed states: Planned, In Progress, Review, Blocked, Done
-// - No free typing. Click/keyboard to choose.
-// - On change, dispatch 'input' on the editor to trigger existing autosave.
+// - Click to select; click selected again to clear (deselect)
+// - Arrow keys to move; Esc to clear
+// - Unselected chips are lighter; selected is primary
+// - Triggers existing autosave by dispatching 'input' on the editor
 
 const STATUS = ['Planned','In Progress','Review','Blocked','Done'];
 
@@ -26,20 +29,25 @@ function normalize(val){
 }
 
 function currentFromCell(td){
-  // prefer data-value, then text
   const dv = td.getAttribute('data-value');
   if (dv) return normalize(dv);
   const raw = td.textContent || '';
   return normalize(raw);
 }
 
-function buildChips(cur){
+function buildGroup(cur){
   const group = document.createElement('div');
   group.className = 'status-chip-group';
   group.setAttribute('role','group');
   group.setAttribute('aria-label','진행 상태');
 
-  STATUS.forEach((label, i)=>{
+  // rows: [0..2], [3..4]
+  const rowTop = document.createElement('div');
+  rowTop.className = 'status-chip-row top';
+  const rowBottom = document.createElement('div');
+  rowBottom.className = 'status-chip-row bottom';
+
+  STATUS.forEach((label, idx)=>{
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'status-chip';
@@ -47,32 +55,40 @@ function buildChips(cur){
     btn.dataset.value = label;
     if (label === cur) btn.classList.add('selected');
     btn.tabIndex = 0;
-    group.appendChild(btn);
+    (idx < 3 ? rowTop : rowBottom).appendChild(btn);
   });
+
+  group.appendChild(rowTop);
+  group.appendChild(rowBottom);
   return group;
 }
 
 function applySelection(group, value){
   group.querySelectorAll('.status-chip').forEach(b=>{
-    b.classList.toggle('selected', b.dataset.value === value);
+    const on = b.dataset.value === value && value !== '';
+    b.classList.toggle('selected', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
   });
 }
 
 function mountChips(td){
-  if (td.querySelector('.status-chip-group')) return; // already mounted
+  if (td.querySelector('.status-chip-group')) return;
   const editor = td.closest('#journal-editor, .journal-editor, [data-editor-key="journal"]');
   const cur = currentFromCell(td);
-  td.classList.add('status-cell');
-  td.innerHTML = ''; // clear free text
-  const group = buildChips(cur);
+  td.classList.add('status-cell','centered');
+  td.innerHTML = '';
+  const group = buildGroup(cur);
   td.appendChild(group);
 
   function commit(val){
     const v = normalize(val);
-    td.setAttribute('data-value', v);
-    // also keep plain text shadow for copy/export (hidden via CSS if needed)
-    td.dataset.raw = v;
-    // trigger autosave via synthetic input on editor root
+    if (v) {
+      td.setAttribute('data-value', v);
+      td.dataset.raw = v;
+    } else {
+      td.removeAttribute('data-value');
+      td.dataset.raw = '';
+    }
     const evt = new Event('input', { bubbles: true });
     if (editor) editor.dispatchEvent(evt);
   }
@@ -80,22 +96,25 @@ function mountChips(td){
   group.addEventListener('click', (e)=>{
     const btn = e.target.closest('.status-chip');
     if (!btn) return;
-    const val = btn.dataset.value;
-    applySelection(group, val);
-    commit(val);
+    const current = td.getAttribute('data-value') || '';
+    const next = (btn.dataset.value === current) ? '' : btn.dataset.value; // toggle to clear
+    applySelection(group, next);
+    commit(next);
   });
 
-  // Keyboard: arrow left/right to move selection
+  // Keyboard support
   group.addEventListener('keydown', (e)=>{
     const chips = Array.from(group.querySelectorAll('.status-chip'));
-    const idx = chips.findIndex(c => c.classList.contains('selected'));
+    const curVal = td.getAttribute('data-value') || '';
+    let idx = chips.findIndex(c => c.dataset.value === curVal);
     if (e.key === 'ArrowRight' || e.key === 'ArrowDown'){
-      const next = chips[(Math.max(0, idx) + 1) % chips.length];
-      next.click(); next.focus(); e.preventDefault();
-    }
-    if (e.key === 'ArrowLeft' || e.key === 'ArrowUp'){
-      const prev = chips[(idx > 0 ? idx : chips.length) - 1];
-      prev.click(); prev.focus(); e.preventDefault();
+      idx = (idx + 1 + chips.length) % chips.length;
+      chips[idx].click(); chips[idx].focus(); e.preventDefault();
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp'){
+      idx = (idx - 1 + chips.length) % chips.length;
+      chips[idx].click(); chips[idx].focus(); e.preventDefault();
+    } else if (e.key === 'Escape'){
+      applySelection(group, ''); commit(''); e.preventDefault();
     }
   });
 }
@@ -107,7 +126,6 @@ function enhance(){
   cells.forEach(td => { if (isStatusCell(td)) mountChips(td); });
 }
 
-// Run once + observe mutations to catch re-renders
 document.addEventListener('DOMContentLoaded', enhance);
 const mo = new MutationObserver(()=>enhance());
 mo.observe(document.documentElement, { childList:true, subtree:true });

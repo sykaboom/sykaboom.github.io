@@ -49,13 +49,24 @@ tbody tr:hover{ background-color:#f1f5f9; }
 .draggable-item{ cursor:grab; }
 .sortable-ghost{ background-color:#eff6ff; }
 
-/* styles.css additions for Journal status chips */
-.status-cell { padding: 6px 8px; }
+
+/* === Journal status chips (centered, 3 over 2) === */
+.status-cell.centered { text-align: center; vertical-align: middle; }
+
 .status-chip-group {
-  display: flex;
+  display: inline-flex;
+  flex-direction: column;
   gap: 6px;
-  flex-wrap: wrap;
+  align-items: center;
 }
+
+.status-chip-row {
+  display: inline-flex;
+  gap: 6px;
+  justify-content: center;
+  flex-wrap: nowrap;
+}
+
 .status-chip {
   appearance: none;
   display: inline-block;
@@ -67,12 +78,19 @@ tbody tr:hover{ background-color:#f1f5f9; }
   line-height: 1.2;
   cursor: pointer;
   user-select: none;
+  color: #64748b; /* unselected: slate-500 */
+  transition: background .12s ease, border-color .12s ease, color .12s ease, transform .06s ease;
 }
+
 .status-chip:hover { background: #f8fafc; }
-.status-chip:focus { outline: 2px solid #93c5fd; outline-offset: 1px; }
+.status-chip:active { transform: translateY(1px); }
+
 .status-chip.selected {
   background: #2563eb;
   border-color: #2563eb;
   color: #ffffff;
 }
 
+@media (max-width: 640px){
+  .status-chip { padding: 3px 8px; font-size: 11px; }
+}
